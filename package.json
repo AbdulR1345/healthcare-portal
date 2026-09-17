@@ -1,0 +1,25 @@
+{
+  "name": "healthcare-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-Powered Healthcare Appointment & Patient Portal",
+  "scripts": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:init": "cd server && npm run db:init",
+    "setup": "npm install && npm run db:up && cd server && npm install && npm run db:init && cd ../client && npm install",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "dev:ai": "cd ai-service && python main.py",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "npm --prefix client run build",
+    "test:server": "node scripts/validate-server.js",
+    "test:client": "npm --prefix client run build",
+    "test:ai": "python -m compileall -q ai-service",
+    "test": "npm run test:server && npm run test:client && npm run test:ai",
+    "install:all": "cd server && npm install && cd ../client && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}

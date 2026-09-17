@@ -1,0 +1,65 @@
+.navbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  height: 64px;
+  display: flex;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+
+.navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: var(--text);
+}
+
+.brand-icon {
+  font-size: 1.5rem;
+}
+
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.navbar-links a {
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.navbar-links a:hover {
+  color: var(--primary);
+}
+
+.navbar-user {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border);
+}
+
+@media (max-width: 768px) {
+  .navbar-links {
+    gap: 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .navbar-user {
+    display: none;
+  }
+}

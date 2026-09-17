@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.env
+uploads/*
+!uploads/.gitkeep
+dist/
+.vite/
+*.log
+.DS_Store
