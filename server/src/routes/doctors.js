@@ -1,11 +1,12 @@
-const { searchDoctors, getDoctorById, getAvailableSlots, aiAssistSearch } = require('../controllers/doctorController');
-const { authenticate } = require('../middleware/auth');
+import { Router } from 'express';
+import { searchDoctors, getDoctorById, getAvailableSlots, aiAssistSearch } from '../controllers/doctorController.js';
+import { authenticate } from '../middleware/auth.js';
 
-const router = require('express').Router();
+const router = Router();
 
 router.get('/', authenticate, searchDoctors);
 router.post('/assist', authenticate, aiAssistSearch);
 router.get('/:doctorId/slots', authenticate, getAvailableSlots);
 router.get('/:id', authenticate, getDoctorById);
 
-module.exports = router;
+export default router;

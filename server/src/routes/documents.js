@@ -1,12 +1,13 @@
-const {
+import { Router } from 'express';
+import {
   uploadDocument,
   getMyDocuments,
   summarizeDocument,
-} = require('../controllers/documentController');
-const { authenticate } = require('../middleware/auth');
-const upload = require('../middleware/upload');
+} from '../controllers/documentController.js';
+import { authenticate } from '../middleware/auth.js';
+import upload from '../middleware/upload.js';
 
-const router = require('express').Router();
+const router = Router();
 
 router.use(authenticate);
 
@@ -14,4 +15,4 @@ router.get('/', getMyDocuments);
 router.post('/upload', upload.single('file'), uploadDocument);
 router.post('/:id/summarize', summarizeDocument);
 
-module.exports = router;
+export default router;

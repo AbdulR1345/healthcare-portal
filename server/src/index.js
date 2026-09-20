@@ -1,14 +1,26 @@
-const fs = require('fs');
-const path = require('path');
-const http = require('http');
-const express = require('express');
-const cors = require('cors');
-const cron = require('node-cron');
-const { Server } = require('socket.io');
-require('dotenv').config();
+import fs from 'node:fs';
+import path from 'node:path';
+import http from 'node:http';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import cors from 'cors';
+import cron from 'node-cron';
+import { Server } from 'socket.io';
+import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
 
-const pool = require('./db/pool');
-const { sendReminderEmail } = require('./services/emailService');
+import pool from './db/pool.js';
+import { sendReminderEmail } from './services/emailService.js';
+import authRoutes from './routes/auth.js';
+import doctorRoutes from './routes/doctors.js';
+import appointmentRoutes from './routes/appointments.js';
+import documentRoutes from './routes/documents.js';
+import chatRoutes from './routes/chat.js';
+import adminRoutes from './routes/admin.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const uploadsDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -45,12 +57,12 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'healthcare-portal-api' });
 });
 
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/doctors', require('./routes/doctors'));
-app.use('/api/appointments', require('./routes/appointments'));
-app.use('/api/documents', require('./routes/documents'));
-app.use('/api/chat', require('./routes/chat'));
-app.use('/api/admin', require('./routes/admin'));
+app.use('/api/auth', authRoutes);
+app.use('/api/doctors', doctorRoutes);
+app.use('/api/appointments', appointmentRoutes);
+app.use('/api/documents', documentRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
@@ -64,7 +76,6 @@ io.use((socket, next) => {
   if (!token) return next(new Error('Authentication required'));
 
   try {
-    const jwt = require('jsonwebtoken');
     socket.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch {
@@ -159,4 +170,4 @@ server.listen(PORT, () => {
   console.log(`Healthcare Portal API running on port ${PORT}`);
 });
 
-module.exports = { app, io };
+export { app, io };

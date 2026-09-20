@@ -1,6 +1,6 @@
-const pool = require('../db/pool');
+import pool from '../db/pool.js';
 
-async function searchDoctors(req, res) {
+export async function searchDoctors(req, res) {
   const {
     specialization,
     location,
@@ -71,7 +71,7 @@ async function searchDoctors(req, res) {
   }
 }
 
-async function getDoctorById(req, res) {
+export async function getDoctorById(req, res) {
   try {
     const { rows } = await pool.query(
       `SELECT d.*, u.full_name, u.email, u.phone
@@ -93,7 +93,7 @@ async function getDoctorById(req, res) {
   }
 }
 
-async function getAvailableSlots(req, res) {
+export async function getAvailableSlots(req, res) {
   const { doctorId } = req.params;
   const { date } = req.query;
 
@@ -156,7 +156,7 @@ function formatTime(minutes) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
 }
 
-async function aiAssistSearch(req, res) {
+export async function aiAssistSearch(req, res) {
   const { query } = req.body;
   if (!query?.trim()) {
     return res.status(400).json({ error: 'Query is required' });
@@ -210,4 +210,4 @@ function fallbackAssist(query, doctors) {
   };
 }
 
-module.exports = { searchDoctors, getDoctorById, getAvailableSlots, aiAssistSearch };
+export default { searchDoctors, getDoctorById, getAvailableSlots, aiAssistSearch };

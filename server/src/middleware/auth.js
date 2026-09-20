@@ -1,6 +1,6 @@
-const jwt = require('jsonwebtoken');
+import jwt from 'jsonwebtoken';
 
-function authenticate(req, res, next) {
+export function authenticate(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -15,7 +15,7 @@ function authenticate(req, res, next) {
   }
 }
 
-function authorize(...roles) {
+export function authorize(...roles) {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
@@ -24,4 +24,4 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { authenticate, authorize };
+export default { authenticate, authorize };

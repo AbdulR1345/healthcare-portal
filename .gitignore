@@ -1,11 +1,26 @@
 # Dependencies
 node_modules/
+
+# Python
 __pycache__/
 *.pyc
+
+# Environment / secrets
 .env
+
+# Uploaded files
 uploads/*
 !uploads/.gitkeep
+
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Build output
 dist/
 .vite/
+
+# Logs
 *.log
+
+# OS files
 .DS_Store

@@ -3,9 +3,11 @@
  * Falls back to console logging when SMTP is not configured.
  */
 
+import nodemailer from 'nodemailer';
+
 let transporter = null;
 
-function isConfigured() {
+export function isConfigured() {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
@@ -13,7 +15,6 @@ function getTransporter() {
   if (transporter) return transporter;
   if (!isConfigured()) return null;
 
-  const nodemailer = require('nodemailer');
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
@@ -26,7 +27,7 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendReminderEmail(to, subject, message) {
+export async function sendReminderEmail(to, subject, message) {
   const transport = getTransporter();
 
   if (!transport) {
@@ -59,4 +60,4 @@ async function sendReminderEmail(to, subject, message) {
   }
 }
 
-module.exports = { sendReminderEmail, isConfigured };
+export default { sendReminderEmail, isConfigured };

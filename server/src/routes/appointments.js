@@ -1,12 +1,13 @@
-const {
+import { Router } from 'express';
+import {
   bookAppointment,
   getMyAppointments,
   updateAppointmentStatus,
   rescheduleAppointment,
-} = require('../controllers/appointmentController');
-const { authenticate, authorize } = require('../middleware/auth');
+} from '../controllers/appointmentController.js';
+import { authenticate, authorize } from '../middleware/auth.js';
 
-const router = require('express').Router();
+const router = Router();
 
 router.use(authenticate);
 
@@ -15,4 +16,4 @@ router.post('/', authorize('patient'), bookAppointment);
 router.patch('/:id/status', updateAppointmentStatus);
 router.patch('/:id/reschedule', authorize('patient', 'admin'), rescheduleAppointment);
 
-module.exports = router;
+export default router;

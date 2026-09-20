@@ -1,5 +1,9 @@
-const multer = require('multer');
-const path = require('path');
+import multer from 'multer';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ALLOWED_TYPES = ['.pdf', '.jpg', '.jpeg', '.png'];
 const MAX_SIZE = 10 * 1024 * 1024;
@@ -26,4 +30,4 @@ const upload = multer({
   limits: { fileSize: MAX_SIZE },
 });
 
-module.exports = upload;
+export default upload;

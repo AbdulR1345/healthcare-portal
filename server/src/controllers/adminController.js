@@ -1,6 +1,6 @@
-const pool = require('../db/pool');
+import pool from '../db/pool.js';
 
-async function getDashboardStats(req, res) {
+export async function getDashboardStats(req, res) {
   try {
     const [patients, doctors, appointments, completed, specializations] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS count FROM users WHERE role = 'patient'`),
@@ -33,7 +33,7 @@ async function getDashboardStats(req, res) {
   }
 }
 
-async function getReminders(req, res) {
+export async function getReminders(req, res) {
   try {
     const { rows } = await pool.query(
       `SELECT r.*, a.appointment_date, a.start_time
@@ -50,4 +50,4 @@ async function getReminders(req, res) {
   }
 }
 
-module.exports = { getDashboardStats, getReminders };
+export default { getDashboardStats, getReminders };

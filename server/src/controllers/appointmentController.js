@@ -1,6 +1,6 @@
-const pool = require('../db/pool');
+import pool from '../db/pool.js';
 
-async function bookAppointment(req, res) {
+export async function bookAppointment(req, res) {
   const { doctorId, appointmentDate, startTime, endTime, notes } = req.body;
   const patientId = req.user.id;
 
@@ -67,7 +67,7 @@ async function bookAppointment(req, res) {
   }
 }
 
-async function getMyAppointments(req, res) {
+export async function getMyAppointments(req, res) {
   try {
     let query;
     let params;
@@ -110,7 +110,7 @@ async function getMyAppointments(req, res) {
   }
 }
 
-async function updateAppointmentStatus(req, res) {
+export async function updateAppointmentStatus(req, res) {
   const { id } = req.params;
   const { status } = req.body;
   const validStatuses = ['scheduled', 'confirmed', 'completed', 'cancelled'];
@@ -148,7 +148,7 @@ async function updateAppointmentStatus(req, res) {
   }
 }
 
-async function rescheduleAppointment(req, res) {
+export async function rescheduleAppointment(req, res) {
   const { id } = req.params;
   const { appointmentDate, startTime, endTime } = req.body;
 
@@ -200,7 +200,7 @@ async function rescheduleAppointment(req, res) {
   }
 }
 
-module.exports = {
+export default {
   bookAppointment,
   getMyAppointments,
   updateAppointmentStatus,

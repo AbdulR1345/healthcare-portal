@@ -1,7 +1,7 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { validationResult } = require('express-validator');
-const pool = require('../db/pool');
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { validationResult } from 'express-validator';
+import pool from '../db/pool.js';
 
 function signToken(user) {
   return jwt.sign(
@@ -18,7 +18,7 @@ function signToken(user) {
   );
 }
 
-async function register(req, res) {
+export async function register(req, res) {
   const errors = validationResult(req);
 
   if (!errors.isEmpty()) {
@@ -128,7 +128,7 @@ async function register(req, res) {
   }
 }
 
-async function login(req, res) {
+export async function login(req, res) {
   const errors = validationResult(req);
 
   if (!errors.isEmpty()) {
@@ -189,7 +189,7 @@ async function login(req, res) {
   }
 }
 
-async function getProfile(req, res) {
+export async function getProfile(req, res) {
   try {
     const { rows } = await pool.query(
       `SELECT
@@ -231,8 +231,4 @@ async function getProfile(req, res) {
   }
 }
 
-module.exports = {
-  register,
-  login,
-  getProfile,
-};
+export default { register, login, getProfile };

@@ -1,8 +1,12 @@
-const fs = require('fs');
-const path = require('path');
-const pool = require('../db/pool');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import pool from '../db/pool.js';
 
-async function uploadDocument(req, res) {
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export async function uploadDocument(req, res) {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -26,7 +30,7 @@ async function uploadDocument(req, res) {
   }
 }
 
-async function getMyDocuments(req, res) {
+export async function getMyDocuments(req, res) {
   try {
     let query;
     let params;
@@ -56,7 +60,7 @@ async function getMyDocuments(req, res) {
   }
 }
 
-async function summarizeDocument(req, res) {
+export async function summarizeDocument(req, res) {
   const { id } = req.params;
 
   try {
@@ -105,4 +109,4 @@ async function summarizeDocument(req, res) {
   }
 }
 
-module.exports = { uploadDocument, getMyDocuments, summarizeDocument };
+export default { uploadDocument, getMyDocuments, summarizeDocument };

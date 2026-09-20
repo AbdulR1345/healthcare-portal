@@ -1,4 +1,5 @@
-const pool = require('./pool');
+import bcrypt from 'bcryptjs';
+import pool from './pool.js';
 
 const schema = `
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -95,7 +96,6 @@ async function init() {
     await client.query(schema);
     console.log('Database schema initialized successfully.');
 
-    const bcrypt = require('bcryptjs');
     const hash = await bcrypt.hash('password123', 10);
 
     await client.query(`

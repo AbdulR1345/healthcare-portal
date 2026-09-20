@@ -1,11 +1,12 @@
-const {
+import { Router } from 'express';
+import {
   getConversations,
   getMessages,
   sendMessage,
-} = require('../controllers/chatController');
-const { authenticate } = require('../middleware/auth');
+} from '../controllers/chatController.js';
+import { authenticate } from '../middleware/auth.js';
 
-const router = require('express').Router();
+const router = Router();
 
 router.use(authenticate);
 
@@ -13,4 +14,4 @@ router.get('/conversations', getConversations);
 router.get('/:userId', getMessages);
 router.post('/', sendMessage);
 
-module.exports = router;
+export default router;

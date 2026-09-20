@@ -1,6 +1,6 @@
-const pool = require('../db/pool');
+import pool from '../db/pool.js';
 
-async function getConversations(req, res) {
+export async function getConversations(req, res) {
   try {
     const userId = req.user.id;
     const { rows } = await pool.query(
@@ -32,7 +32,7 @@ async function getConversations(req, res) {
   }
 }
 
-async function getMessages(req, res) {
+export async function getMessages(req, res) {
   const { userId: partnerId } = req.params;
   const userId = req.user.id;
 
@@ -60,7 +60,7 @@ async function getMessages(req, res) {
   }
 }
 
-async function sendMessage(req, res) {
+export async function sendMessage(req, res) {
   const { receiverId, content, appointmentId } = req.body;
 
   if (!receiverId || !content?.trim()) {
@@ -80,4 +80,4 @@ async function sendMessage(req, res) {
   }
 }
 
-module.exports = { getConversations, getMessages, sendMessage };
+export default { getConversations, getMessages, sendMessage };
