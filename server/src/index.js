@@ -68,7 +68,7 @@ const io = new Server(server, {
 });
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: "100kb" }));
 app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/health", (_req, res) => {
@@ -83,10 +83,19 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.use((err, _req, res, _next) => {
-  console.error(err);
-  res
-    .status(err.status || 500)
-    .json({ error: err.message || "Internal server error" });
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large" });
+  }
+
+  if (
+    err.type === "entity.parse.failed" ||
+    (err instanceof SyntaxError && err.status === 400 && "body" in err)
+  ) {
+    return res.status(400).json({ error: "Malformed JSON request" });
+  }
+
+  console.error("Unhandled request error:", err.code || err.type || "unknown");
+  return res.status(err.status || 500).json({ error: "Request failed" });
 });
 
 const onlineUsers = new Map();
