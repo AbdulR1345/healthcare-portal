@@ -1,13 +1,13 @@
-import { apiUrl } from '../config';
+import { apiUrl } from "../config";
 
 async function request(endpoint, options = {}) {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem("token");
   const headers = {
     ...options.headers,
   };
 
   if (!(options.body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json';
+    headers["Content-Type"] = "application/json";
   }
 
   if (token) {
@@ -22,7 +22,11 @@ async function request(endpoint, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error || data.message || 'Request failed');
+    if (Array.isArray(data.errors) && data.errors.length) {
+      throw new Error(data.errors.map(({ msg }) => msg).join(". "));
+    }
+
+    throw new Error(data.error || data.message || "Request failed");
   }
 
   return data;
@@ -30,9 +34,11 @@ async function request(endpoint, options = {}) {
 
 export const api = {
   auth: {
-    register: (body) => request('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
-    login: (body) => request('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
-    profile: () => request('/auth/profile'),
+    register: (body) =>
+      request("/auth/register", { method: "POST", body: JSON.stringify(body) }),
+    login: (body) =>
+      request("/auth/login", { method: "POST", body: JSON.stringify(body) }),
+    profile: () => request("/auth/profile"),
   },
   doctors: {
     search: (params) => {
@@ -40,30 +46,44 @@ export const api = {
       return request(`/doctors?${query}`);
     },
     assist: (query) =>
-      request('/doctors/assist', { method: 'POST', body: JSON.stringify({ query }) }),
+      request("/doctors/assist", {
+        method: "POST",
+        body: JSON.stringify({ query }),
+      }),
     getById: (id) => request(`/doctors/${id}`),
-    getSlots: (doctorId, date) => request(`/doctors/${doctorId}/slots?date=${date}`),
+    getSlots: (doctorId, date) =>
+      request(`/doctors/${doctorId}/slots?date=${date}`),
   },
   appointments: {
-    list: () => request('/appointments'),
-    book: (body) => request('/appointments', { method: 'POST', body: JSON.stringify(body) }),
+    list: () => request("/appointments"),
+    book: (body) =>
+      request("/appointments", { method: "POST", body: JSON.stringify(body) }),
     updateStatus: (id, status) =>
-      request(`/appointments/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+      request(`/appointments/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
     reschedule: (id, body) =>
-      request(`/appointments/${id}/reschedule`, { method: 'PATCH', body: JSON.stringify(body) }),
+      request(`/appointments/${id}/reschedule`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
   },
   documents: {
-    list: () => request('/documents'),
-    upload: (formData) => request('/documents/upload', { method: 'POST', body: formData }),
-    summarize: (id) => request(`/documents/${id}/summarize`, { method: 'POST' }),
+    list: () => request("/documents"),
+    upload: (formData) =>
+      request("/documents/upload", { method: "POST", body: formData }),
+    summarize: (id) =>
+      request(`/documents/${id}/summarize`, { method: "POST" }),
   },
   chat: {
-    conversations: () => request('/chat/conversations'),
+    conversations: () => request("/chat/conversations"),
     messages: (userId) => request(`/chat/${userId}`),
-    send: (body) => request('/chat', { method: 'POST', body: JSON.stringify(body) }),
+    send: (body) =>
+      request("/chat", { method: "POST", body: JSON.stringify(body) }),
   },
   admin: {
-    stats: () => request('/admin/stats'),
-    reminders: () => request('/admin/reminders'),
+    stats: () => request("/admin/stats"),
+    reminders: () => request("/admin/reminders"),
   },
 };

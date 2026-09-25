@@ -1,7 +1,14 @@
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { validationResult } from 'express-validator';
-import pool from '../db/pool.js';
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { validationResult } from "express-validator";
+import pool from "../db/pool.js";
+
+function sanitizedValidationErrors(result) {
+  return result.array().map(({ path, msg }) => ({
+    path,
+    msg,
+  }));
+}
 
 function signToken(user) {
   return jwt.sign(
@@ -13,8 +20,8 @@ function signToken(user) {
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-    }
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    },
   );
 }
 
@@ -23,7 +30,7 @@ export async function register(req, res) {
 
   if (!errors.isEmpty()) {
     return res.status(400).json({
-      errors: errors.array(),
+      errors: sanitizedValidationErrors(errors),
     });
   }
 
@@ -37,25 +44,25 @@ export async function register(req, res) {
     location,
     fee,
   } = req.body;
+  const normalizedEmail = email.trim().toLowerCase();
 
   // Defense in depth:
   // Even if route validation is bypassed or changed accidentally,
   // the controller must never allow public admin registration.
-  if (!['patient', 'doctor'].includes(role)) {
+  if (!["patient", "doctor"].includes(role)) {
     return res.status(403).json({
-      error: 'Invalid registration role',
+      error: "Invalid registration role",
     });
   }
 
   try {
-    const existing = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
-    );
+    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [
+      normalizedEmail,
+    ]);
 
     if (existing.rows.length) {
       return res.status(409).json({
-        error: 'Email already registered',
+        error: "Email already registered",
       });
     }
 
@@ -63,7 +70,7 @@ export async function register(req, res) {
     const client = await pool.connect();
 
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       const { rows } = await client.query(
         `INSERT INTO users (
@@ -75,19 +82,13 @@ export async function register(req, res) {
         )
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, email, role, full_name, phone`,
-        [
-          email,
-          passwordHash,
-          role,
-          fullName,
-          phone || null,
-        ]
+        [normalizedEmail, passwordHash, role, fullName, phone || null],
       );
 
       const user = rows[0];
 
       // Create doctor profile only when registering as a doctor.
-      if (role === 'doctor') {
+      if (role === "doctor") {
         await client.query(
           `INSERT INTO doctors (
             user_id,
@@ -96,16 +97,11 @@ export async function register(req, res) {
             fee
           )
           VALUES ($1, $2, $3, $4)`,
-          [
-            user.id,
-            specialization || 'General Practice',
-            location || 'Remote',
-            fee || 100,
-          ]
+          [user.id, specialization, location, fee ?? 100],
         );
       }
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
 
       const token = signToken(user);
 
@@ -114,16 +110,22 @@ export async function register(req, res) {
         token,
       });
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw err;
     } finally {
       client.release();
     }
   } catch (err) {
-    console.error('Register error:', err);
+    if (err.code === "23505") {
+      return res.status(409).json({
+        error: "Email already registered",
+      });
+    }
+
+    console.error("Register error:", err.code || "unknown");
 
     return res.status(500).json({
-      error: 'Registration failed',
+      error: "Registration failed",
     });
   }
 }
@@ -133,11 +135,12 @@ export async function login(req, res) {
 
   if (!errors.isEmpty()) {
     return res.status(400).json({
-      errors: errors.array(),
+      errors: sanitizedValidationErrors(errors),
     });
   }
 
   const { email, password } = req.body;
+  const normalizedEmail = email.trim().toLowerCase();
 
   try {
     const { rows } = await pool.query(
@@ -150,25 +153,22 @@ export async function login(req, res) {
         phone
        FROM users
        WHERE email = $1`,
-      [email]
+      [normalizedEmail],
     );
 
     if (!rows.length) {
       return res.status(401).json({
-        error: 'Invalid credentials',
+        error: "Invalid credentials",
       });
     }
 
     const user = rows[0];
 
-    const valid = await bcrypt.compare(
-      password,
-      user.password_hash
-    );
+    const valid = await bcrypt.compare(password, user.password_hash);
 
     if (!valid) {
       return res.status(401).json({
-        error: 'Invalid credentials',
+        error: "Invalid credentials",
       });
     }
 
@@ -181,10 +181,10 @@ export async function login(req, res) {
       token,
     });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error("Login error:", err.code || "unknown");
 
     return res.status(500).json({
-      error: 'Login failed',
+      error: "Login failed",
     });
   }
 }
@@ -201,21 +201,21 @@ export async function getProfile(req, res) {
         created_at
        FROM users
        WHERE id = $1`,
-      [req.user.id]
+      [req.user.id],
     );
 
     if (!rows.length) {
       return res.status(404).json({
-        error: 'User not found',
+        error: "User not found",
       });
     }
 
     const profile = rows[0];
 
-    if (profile.role === 'doctor') {
+    if (profile.role === "doctor") {
       const { rows: docRows } = await pool.query(
-        'SELECT * FROM doctors WHERE user_id = $1',
-        [req.user.id]
+        "SELECT * FROM doctors WHERE user_id = $1",
+        [req.user.id],
       );
 
       profile.doctor = docRows[0] || null;
@@ -223,10 +223,10 @@ export async function getProfile(req, res) {
 
     return res.json(profile);
   } catch (err) {
-    console.error('Profile error:', err);
+    console.error("Profile error:", err);
 
     return res.status(500).json({
-      error: 'Failed to fetch profile',
+      error: "Failed to fetch profile",
     });
   }
 }
