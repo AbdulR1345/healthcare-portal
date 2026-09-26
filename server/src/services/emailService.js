@@ -12,9 +12,7 @@ let transporter = null;
 
 export function isConfigured() {
   return Boolean(
-    process.env.SMTP_HOST &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASS,
+    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
   );
 }
 
@@ -47,11 +45,7 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-export async function sendVerificationEmail({
-  to,
-  fullName,
-  verificationUrl,
-}) {
+export async function sendVerificationEmail({ to, fullName, verificationUrl }) {
   const transport = getTransporter();
 
   const safeName = escapeHtml(fullName || "there");
@@ -117,9 +111,7 @@ Healthcare Portal`;
   `;
 
   if (!transport) {
-    console.log(
-      `[Email skipped - SMTP not configured] To: ${to} | ${subject}`,
-    );
+    console.log(`[Email skipped - SMTP not configured] To: ${to} | ${subject}`);
     console.log(`[Verification URL] ${verificationUrl}`);
 
     return {
@@ -143,8 +135,176 @@ Healthcare Portal`;
       sent: true,
     };
   } catch (err) {
+    console.error(`Failed to send verification email to ${to}:`, err.message);
+
+    return {
+      sent: false,
+      reason: err.message,
+    };
+  }
+}
+
+export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
+  const transport = getTransporter();
+
+  const safeName = escapeHtml(fullName || "there");
+  const safeResetUrl = escapeHtml(resetUrl);
+
+  const subject = "Reset your Healthcare Portal password";
+
+  const text = `Hello ${fullName || "there"},
+
+We received a request to reset your Healthcare Portal password.
+
+Reset your password:
+${resetUrl}
+
+This password reset link will expire after 1 hour and can only be used once.
+
+If you did not request a password reset, you can safely ignore this email.
+
+Healthcare Portal`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #0f172a;">
+      <h2 style="margin-bottom: 16px;">Reset your password</h2>
+
+      <p>Hello ${safeName},</p>
+
+      <p>
+        We received a request to reset your Healthcare Portal password.
+      </p>
+
+      <p style="margin: 28px 0;">
+        <a
+          href="${safeResetUrl}"
+          style="
+            display: inline-block;
+            padding: 12px 20px;
+            background: #0d9488;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+          "
+        >
+          Reset Password
+        </a>
+      </p>
+
+      <p style="font-size: 14px; color: #475569;">
+        This link expires after 1 hour and can only be used once.
+      </p>
+
+      <p style="font-size: 14px; color: #475569;">
+        If you did not request this password reset, you can safely ignore this email.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 28px 0;" />
+
+      <p style="font-size: 12px; color: #64748b;">
+        This is an automated email from Healthcare Portal.
+      </p>
+    </div>
+  `;
+
+  if (!transport) {
+    console.log(`[Email skipped - SMTP not configured] To: ${to} | ${subject}`);
+    console.log(`[Password Reset URL] ${resetUrl}`);
+
+    return {
+      sent: false,
+      reason: "smtp_not_configured",
+    };
+  }
+
+  try {
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject,
+      text,
+      html,
+    });
+
+    console.log(`Password reset email sent to ${to}`);
+
+    return {
+      sent: true,
+    };
+  } catch (err) {
+    console.error(`Failed to send password reset email to ${to}:`, err.message);
+
+    return {
+      sent: false,
+      reason: err.message,
+    };
+  }
+}
+
+export async function sendPasswordResetConfirmationEmail({ to, fullName }) {
+  const transport = getTransporter();
+
+  const safeName = escapeHtml(fullName || "there");
+
+  const subject = "Your Healthcare Portal password was reset";
+
+  const text = `Hello ${fullName || "there"},
+
+Your Healthcare Portal password was successfully reset.
+
+If you did not perform this action, please contact support immediately.
+
+Healthcare Portal`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #0f172a;">
+      <h2>Password reset successful</h2>
+
+      <p>Hello ${safeName},</p>
+
+      <p>
+        Your Healthcare Portal password was successfully reset.
+      </p>
+
+      <p style="font-size: 14px; color: #475569;">
+        If you did not perform this action, please contact support immediately.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 28px 0;" />
+
+      <p style="font-size: 12px; color: #64748b;">
+        This is an automated email from Healthcare Portal.
+      </p>
+    </div>
+  `;
+
+  if (!transport) {
+    console.log(`[Email skipped - SMTP not configured] To: ${to} | ${subject}`);
+
+    return {
+      sent: false,
+      reason: "smtp_not_configured",
+    };
+  }
+
+  try {
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject,
+      text,
+      html,
+    });
+
+    console.log(`Password reset confirmation sent to ${to}`);
+
+    return {
+      sent: true,
+    };
+  } catch (err) {
     console.error(
-      `Failed to send verification email to ${to}:`,
+      `Failed to send password reset confirmation to ${to}:`,
       err.message,
     );
 
@@ -204,6 +364,8 @@ export async function sendReminderEmail(to, subject, message) {
 
 export default {
   sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendPasswordResetConfirmationEmail,
   sendReminderEmail,
   isConfigured,
 };

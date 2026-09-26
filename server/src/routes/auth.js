@@ -7,6 +7,10 @@ import {
   resendVerificationEmail,
   getProfile,
 } from "../controllers/authController.js";
+import {
+  forgotPassword,
+  resetPassword,
+} from "../controllers/passwordResetController.js";
 import { authenticate } from "../middleware/auth.js";
 
 const router = Router();
@@ -225,6 +229,65 @@ router.post(
       .normalizeEmail(),
   ],
   resendVerificationEmail,
+);
+
+/*
+ * Forgot password
+ */
+router.post(
+  "/forgot-password",
+  [
+    body("email")
+      .isString()
+      .withMessage("Email must be a string")
+      .bail()
+      .trim()
+      .isEmail()
+      .withMessage("Please provide a valid email")
+      .bail()
+      .isLength({ max: 254 })
+      .withMessage("Email must be 254 characters or fewer")
+      .normalizeEmail(),
+  ],
+  forgotPassword,
+);
+
+/*
+ * Reset password
+ */
+router.post(
+  "/reset-password",
+  [
+    body("token")
+      .isString()
+      .withMessage("Reset token must be a string")
+      .bail()
+      .matches(/^[a-f0-9]{64}$/i)
+      .withMessage("Invalid reset token"),
+
+    body("password")
+      .isString()
+      .withMessage("Password must be a string")
+      .bail()
+      .isLength({ min: 12 })
+      .withMessage("Password must be at least 12 characters")
+      .bail()
+      .custom((password) => {
+        if (Buffer.byteLength(password, "utf8") > maxPasswordBytes) {
+          throw new Error("Password must be 72 bytes or fewer");
+        }
+
+        return true;
+      }),
+
+    body("confirmPassword")
+      .isString()
+      .withMessage("Confirm password must be a string")
+      .bail()
+      .notEmpty()
+      .withMessage("Confirm password is required"),
+  ],
+  resetPassword,
 );
 
 router.get("/profile", authenticate, getProfile);
