@@ -1,10 +1,18 @@
 import { Router } from "express";
 import { body } from "express-validator";
-import { register, login, getProfile } from "../controllers/authController.js";
+import {
+  register,
+  login,
+  verifyEmail,
+  resendVerificationEmail,
+  getProfile,
+} from "../controllers/authController.js";
 import { authenticate } from "../middleware/auth.js";
 
 const router = Router();
+
 const maxPasswordBytes = 72;
+
 const weakPasswords = new Set([
   "password",
   "password123",
@@ -23,11 +31,14 @@ function isDoctor(_value, { req }) {
 
 function isWeakPassword(password, email) {
   const normalizedPassword = password.toLowerCase();
+
   const localPart =
     typeof email === "string" && email.includes("@")
       ? email.split("@")[0].toLowerCase()
       : "";
+
   const compactPassword = normalizedPassword.replace(/[^\p{L}\p{N}]/gu, "");
+
   const compactLocalPart = localPart.replace(/[^\p{L}\p{N}]/gu, "");
 
   return (
@@ -38,40 +49,43 @@ function isWeakPassword(password, email) {
   );
 }
 
+const emailValidator = body("email")
+  .isString()
+  .withMessage("Email must be a string")
+  .bail()
+  .trim()
+  .isEmail()
+  .withMessage("Please provide a valid email")
+  .bail()
+  .isLength({ max: 254 })
+  .withMessage("Email must be 254 characters or fewer")
+  .normalizeEmail();
+
+const passwordValidator = body("password")
+  .isString()
+  .withMessage("Password must be a string")
+  .bail()
+  .isLength({ min: 12 })
+  .withMessage("Password must be at least 12 characters")
+  .bail()
+  .custom((password, { req }) => {
+    if (Buffer.byteLength(password, "utf8") > maxPasswordBytes) {
+      throw new Error("Password must be 72 bytes or fewer");
+    }
+
+    if (isWeakPassword(password, req.body.email)) {
+      throw new Error("Password is too easy to guess");
+    }
+
+    return true;
+  });
+
 router.post(
   "/register",
   [
-    body("email")
-      .isString()
-      .withMessage("Email must be a string")
-      .bail()
-      .trim()
-      .isEmail()
-      .withMessage("Please provide a valid email")
-      .bail()
-      .isLength({ max: 254 })
-      .withMessage("Email must be 254 characters or fewer")
-      .normalizeEmail(),
+    emailValidator,
+    passwordValidator,
 
-    body("password")
-      .isString()
-      .withMessage("Password must be a string")
-      .bail()
-      .isLength({ min: 12 })
-      .withMessage("Password must be at least 12 characters")
-      .bail()
-      .custom((password, { req }) => {
-        if (Buffer.byteLength(password, "utf8") > maxPasswordBytes) {
-          throw new Error("Password must be 72 bytes or fewer");
-        }
-        if (isWeakPassword(password, req.body.email)) {
-          throw new Error("Password is too easy to guess");
-        }
-        return true;
-      }),
-
-    // Public registration can only create patient or doctor accounts.
-    // Admin accounts must be created through a protected administrative process.
     body("role")
       .isIn(["patient", "doctor"])
       .withMessage("Registration is only available for patients and doctors"),
@@ -91,6 +105,7 @@ router.post(
         if (hasControlCharacters(fullName)) {
           throw new Error("Full name contains invalid characters");
         }
+
         return true;
       }),
 
@@ -107,6 +122,7 @@ router.post(
         if (hasControlCharacters(phone)) {
           throw new Error("Phone contains invalid characters");
         }
+
         return true;
       }),
 
@@ -126,6 +142,7 @@ router.post(
         if (hasControlCharacters(specialization)) {
           throw new Error("Specialization contains invalid characters");
         }
+
         return true;
       }),
 
@@ -145,6 +162,7 @@ router.post(
         if (hasControlCharacters(location)) {
           throw new Error("Location contains invalid characters");
         }
+
         return true;
       }),
 
@@ -182,10 +200,31 @@ router.post(
         if (Buffer.byteLength(password, "utf8") > maxPasswordBytes) {
           throw new Error("Password must be 72 bytes or fewer");
         }
+
         return true;
       }),
   ],
   login,
+);
+
+router.get("/verify-email", verifyEmail);
+
+router.post(
+  "/resend-verification",
+  [
+    body("email")
+      .isString()
+      .withMessage("Email must be a string")
+      .bail()
+      .trim()
+      .isEmail()
+      .withMessage("Please provide a valid email")
+      .bail()
+      .isLength({ max: 254 })
+      .withMessage("Email must be 254 characters or fewer")
+      .normalizeEmail(),
+  ],
+  resendVerificationEmail,
 );
 
 router.get("/profile", authenticate, getProfile);

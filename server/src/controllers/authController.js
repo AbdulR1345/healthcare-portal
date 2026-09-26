@@ -2,6 +2,11 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { validationResult } from "express-validator";
 import pool from "../db/pool.js";
+import { generateVerificationToken, hashToken } from "../utils/authTokens.js";
+import { sendVerificationEmail } from "../services/emailService.js";
+
+const VERIFICATION_TOKEN_TTL_HOURS = 24;
+const VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
 
 function sanitizedValidationErrors(result) {
   return result.array().map(({ path, msg }) => ({
@@ -25,6 +30,62 @@ function signToken(user) {
   );
 }
 
+function getVerificationExpiry() {
+  const expiry = new Date();
+  expiry.setHours(expiry.getHours() + VERIFICATION_TOKEN_TTL_HOURS);
+  return expiry;
+}
+
+function getVerificationUrl(token) {
+  const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+
+  return `${clientUrl.replace(/\/+$/, "")}/verify-email?token=${encodeURIComponent(token)}`;
+}
+
+function isValidVerificationToken(token) {
+  return typeof token === "string" && /^[a-f0-9]{64}$/i.test(token);
+}
+
+function isResendCooldownActive(sentAt) {
+  if (!sentAt) {
+    return false;
+  }
+
+  const elapsedSeconds = (Date.now() - new Date(sentAt).getTime()) / 1000;
+
+  return elapsedSeconds < VERIFICATION_RESEND_COOLDOWN_SECONDS;
+}
+
+async function createAndSendVerificationEmail({ userId, email, fullName }) {
+  const verificationToken = generateVerificationToken();
+  const tokenHash = hashToken(verificationToken);
+  const expiresAt = getVerificationExpiry();
+
+  await pool.query(
+    `UPDATE users
+     SET
+       email_verification_token_hash = $1,
+       email_verification_expires_at = $2,
+       email_verification_sent_at = NOW()
+     WHERE id = $3
+       AND email_verified = FALSE`,
+    [tokenHash, expiresAt, userId],
+  );
+
+  const verificationUrl = getVerificationUrl(verificationToken);
+
+  const emailResult = await sendVerificationEmail({
+    to: email,
+    fullName,
+    verificationUrl,
+  });
+
+  return {
+    emailResult,
+    verificationUrl,
+  };
+}
+
 export async function register(req, res) {
   const errors = validationResult(req);
 
@@ -44,11 +105,11 @@ export async function register(req, res) {
     location,
     fee,
   } = req.body;
+
   const normalizedEmail = email.trim().toLowerCase();
 
   // Defense in depth:
-  // Even if route validation is bypassed or changed accidentally,
-  // the controller must never allow public admin registration.
+  // Public registration must never create admin accounts.
   if (!["patient", "doctor"].includes(role)) {
     return res.status(403).json({
       error: "Invalid registration role",
@@ -67,7 +128,14 @@ export async function register(req, res) {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+
+    const verificationToken = generateVerificationToken();
+    const verificationTokenHash = hashToken(verificationToken);
+    const verificationExpiresAt = getVerificationExpiry();
+
     const client = await pool.connect();
+
+    let user;
 
     try {
       await client.query("BEGIN");
@@ -78,16 +146,33 @@ export async function register(req, res) {
           password_hash,
           role,
           full_name,
-          phone
+          phone,
+          email_verified,
+          email_verification_token_hash,
+          email_verification_expires_at,
+          email_verification_sent_at
         )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, email, role, full_name, phone`,
-        [normalizedEmail, passwordHash, role, fullName, phone || null],
+        VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, NOW())
+        RETURNING
+          id,
+          email,
+          role,
+          full_name,
+          phone,
+          email_verified`,
+        [
+          normalizedEmail,
+          passwordHash,
+          role,
+          fullName,
+          phone || null,
+          verificationTokenHash,
+          verificationExpiresAt,
+        ],
       );
 
-      const user = rows[0];
+      user = rows[0];
 
-      // Create doctor profile only when registering as a doctor.
       if (role === "doctor") {
         await client.query(
           `INSERT INTO doctors (
@@ -102,19 +187,36 @@ export async function register(req, res) {
       }
 
       await client.query("COMMIT");
-
-      const token = signToken(user);
-
-      return res.status(201).json({
-        user,
-        token,
-      });
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
     } finally {
       client.release();
     }
+
+    const verificationUrl = getVerificationUrl(verificationToken);
+
+    const emailResult = await sendVerificationEmail({
+      to: user.email,
+      fullName: user.full_name,
+      verificationUrl,
+    });
+
+    const response = {
+      message:
+        "Registration successful. Please verify your email before logging in.",
+      user,
+      verificationRequired: true,
+      emailSent: emailResult.sent,
+    };
+
+    // Only expose the local development URL.
+    // Never expose verification tokens in production responses.
+    if (process.env.NODE_ENV !== "production") {
+      response.verificationUrl = verificationUrl;
+    }
+
+    return res.status(201).json(response);
   } catch (err) {
     if (err.code === "23505") {
       return res.status(409).json({
@@ -150,7 +252,8 @@ export async function login(req, res) {
         password_hash,
         role,
         full_name,
-        phone
+        phone,
+        email_verified
        FROM users
        WHERE email = $1`,
       [normalizedEmail],
@@ -172,6 +275,13 @@ export async function login(req, res) {
       });
     }
 
+    if (!user.email_verified) {
+      return res.status(403).json({
+        error: "Email verification required",
+        code: "EMAIL_NOT_VERIFIED",
+      });
+    }
+
     delete user.password_hash;
 
     const token = signToken(user);
@@ -189,6 +299,153 @@ export async function login(req, res) {
   }
 }
 
+export async function verifyEmail(req, res) {
+  const { token } = req.query;
+
+  if (!isValidVerificationToken(token)) {
+    return res.status(400).json({
+      error: "Invalid or expired verification link",
+    });
+  }
+
+  try {
+    const tokenHash = hashToken(token);
+
+    const { rows } = await pool.query(
+      `SELECT
+        id,
+        email,
+        role,
+        full_name,
+        phone,
+        email_verified,
+        email_verification_expires_at
+       FROM users
+       WHERE email_verification_token_hash = $1
+         AND email_verification_expires_at > NOW()
+       LIMIT 1`,
+      [tokenHash],
+    );
+
+    if (!rows.length) {
+      return res.status(400).json({
+        error: "Invalid or expired verification link",
+      });
+    }
+
+    const user = rows[0];
+
+    if (user.email_verified) {
+      return res.status(400).json({
+        error: "Email is already verified",
+      });
+    }
+
+    const { rows: updatedRows } = await pool.query(
+      `UPDATE users
+       SET
+         email_verified = TRUE,
+         email_verification_token_hash = NULL,
+         email_verification_expires_at = NULL,
+         email_verification_sent_at = NULL
+       WHERE id = $1
+         AND email_verified = FALSE
+       RETURNING
+         id,
+         email,
+         role,
+         full_name,
+         phone,
+         email_verified`,
+      [user.id],
+    );
+
+    if (!updatedRows.length) {
+      return res.status(400).json({
+        error: "Email is already verified",
+      });
+    }
+
+    return res.json({
+      message: "Email verified successfully. You can now log in.",
+      user: updatedRows[0],
+    });
+  } catch (err) {
+    console.error("Email verification error:", err.code || "unknown");
+
+    return res.status(500).json({
+      error: "Email verification failed",
+    });
+  }
+}
+
+export async function resendVerificationEmail(req, res) {
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      errors: sanitizedValidationErrors(errors),
+    });
+  }
+
+  const normalizedEmail = req.body.email.trim().toLowerCase();
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+        id,
+        email,
+        full_name,
+        email_verified,
+        email_verification_sent_at
+       FROM users
+       WHERE email = $1
+       LIMIT 1`,
+      [normalizedEmail],
+    );
+
+    // Same response whether the account exists or not.
+    if (!rows.length || rows[0].email_verified) {
+      return res.json({
+        message:
+          "If the account exists and requires verification, a verification email has been sent.",
+      });
+    }
+
+    const user = rows[0];
+
+    if (isResendCooldownActive(user.email_verification_sent_at)) {
+      return res.json({
+        message:
+          "If the account exists and requires verification, a verification email has been sent.",
+      });
+    }
+
+    const { verificationUrl } = await createAndSendVerificationEmail({
+      userId: user.id,
+      email: user.email,
+      fullName: user.full_name,
+    });
+
+    const response = {
+      message:
+        "If the account exists and requires verification, a verification email has been sent.",
+    };
+
+    if (process.env.NODE_ENV !== "production") {
+      response.verificationUrl = verificationUrl;
+    }
+
+    return res.json(response);
+  } catch (err) {
+    console.error("Resend verification error:", err.code || "unknown");
+
+    return res.status(500).json({
+      error: "Unable to process verification email request",
+    });
+  }
+}
+
 export async function getProfile(req, res) {
   try {
     const { rows } = await pool.query(
@@ -198,6 +455,7 @@ export async function getProfile(req, res) {
         role,
         full_name,
         phone,
+        email_verified,
         created_at
        FROM users
        WHERE id = $1`,
@@ -231,4 +489,10 @@ export async function getProfile(req, res) {
   }
 }
 
-export default { register, login, getProfile };
+export default {
+  register,
+  login,
+  verifyEmail,
+  resendVerificationEmail,
+  getProfile,
+};
