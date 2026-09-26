@@ -8,6 +8,7 @@ import cron from "node-cron";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
 
 import pool from "./db/pool.js";
 import { sendReminderEmail } from "./services/emailService.js";
@@ -70,6 +71,7 @@ const io = new Server(server, {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "100kb" }));
 app.use("/uploads", express.static(uploadsDir));
+app.use(cookieParser());
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "healthcare-portal-api" });

@@ -4,7 +4,11 @@ import { validationResult } from "express-validator";
 import pool from "../db/pool.js";
 import { generateVerificationToken, hashToken } from "../utils/authTokens.js";
 import { sendVerificationEmail } from "../services/emailService.js";
-
+import {
+  createSession,
+  rotateSession,
+  revokeSession,
+} from "../services/sessionService.js";
 const VERIFICATION_TOKEN_TTL_HOURS = 24;
 const VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
 
@@ -15,7 +19,7 @@ function sanitizedValidationErrors(result) {
   }));
 }
 
-function signToken(user) {
+function signAccessToken(user) {
   return jwt.sign(
     {
       id: user.id,
@@ -25,11 +29,10 @@ function signToken(user) {
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+      expiresIn: "15m",
     },
   );
 }
-
 function getVerificationExpiry() {
   const expiry = new Date();
   expiry.setHours(expiry.getHours() + VERIFICATION_TOKEN_TTL_HOURS);
@@ -284,11 +287,30 @@ export async function login(req, res) {
 
     delete user.password_hash;
 
-    const token = signToken(user);
+    const accessToken = signAccessToken(user);
+
+    const { refreshToken, session } = await createSession({
+      userId: user.id,
+      userAgent: req.get("user-agent"),
+      ipAddress: req.ip,
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/api/auth",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
 
     return res.json({
       user,
-      token,
+      token: accessToken,
+      expiresIn: "15m",
+      session: {
+        id: session.id,
+        expiresAt: session.expires_at,
+      },
     });
   } catch (err) {
     console.error("Login error:", err.code || "unknown");
@@ -489,10 +511,111 @@ export async function getProfile(req, res) {
   }
 }
 
+export async function refreshAccessToken(req, res) {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (!refreshToken) {
+    return res.status(401).json({
+      error: "Refresh token required",
+    });
+  }
+
+  try {
+    const rotated = await rotateSession({
+      refreshToken,
+      userAgent: req.get("user-agent"),
+      ipAddress: req.ip,
+    });
+
+    if (!rotated) {
+      res.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+        path: "/api/auth",
+      });
+
+      return res.status(401).json({
+        error: "Invalid or expired refresh session",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+        id,
+        email,
+        role,
+        full_name,
+        phone,
+        email_verified
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [rotated.userId],
+    );
+
+    if (!rows.length || !rows[0].email_verified) {
+      await revokeSession(rotated.refreshToken);
+
+      return res.status(401).json({
+        error: "Unable to refresh session",
+      });
+    }
+
+    const user = rows[0];
+
+    const accessToken = signAccessToken(user);
+
+    res.cookie("refreshToken", rotated.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/api/auth",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({
+      token: accessToken,
+      expiresIn: "15m",
+    });
+  } catch (err) {
+    console.error("Refresh token error:", err.code || "unknown");
+
+    return res.status(500).json({
+      error: "Unable to refresh session",
+    });
+  }
+}
+
+export async function logout(req, res) {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (refreshToken) {
+    try {
+      await revokeSession(refreshToken);
+    } catch (err) {
+      console.error("Logout session revocation error:", err.code || "unknown");
+    }
+  }
+
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/api/auth",
+  });
+
+  return res.json({
+    message: "Logged out successfully",
+  });
+}
+
 export default {
   register,
   login,
   verifyEmail,
   resendVerificationEmail,
   getProfile,
+  refreshAccessToken,
+  logout,
 };

@@ -6,6 +6,8 @@ import {
   verifyEmail,
   resendVerificationEmail,
   getProfile,
+  refreshAccessToken,
+  logout,
 } from "../controllers/authController.js";
 import {
   forgotPassword,
@@ -289,7 +291,9 @@ router.post(
   ],
   resetPassword,
 );
+router.post("/refresh", refreshAccessToken);
 
+router.post("/logout", logout);
 router.get("/profile", authenticate, getProfile);
 
 export default router;
