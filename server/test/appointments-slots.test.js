@@ -188,7 +188,38 @@ test("booking outside doctor availability is rejected", async (t) => {
   assert.equal(result.response.status, 409);
 });
 
-test("already-booked slot cannot be booked again", async (t) => {
+test("all active appointment statuses block booking their slots", async (t) => {
+  const fixture = await createFixture(t);
+  const doctor = await fixture.createDoctor({ dayOfWeek: 1 });
+  const date = futureDateForWeekday(1);
+
+  for (const [status, startTime, endTime] of [
+    ["scheduled", "09:00", "09:30"],
+    ["confirmed", "09:30", "10:00"],
+    ["completed", "10:00", "10:30"],
+  ]) {
+    const patient = await fixture.createUser();
+    const otherPatient = await fixture.createUser();
+    await fixture.createAppointment({
+      patientId: patient.id,
+      doctorId: doctor.doctorId,
+      date,
+      startTime,
+      endTime,
+      status,
+    });
+    const result = await book(
+      { ...otherPatient, accessToken: await signIn(otherPatient) },
+      doctor,
+      date,
+      startTime,
+      endTime,
+    );
+    assert.equal(result.response.status, 409, `${status} must block the slot`);
+  }
+});
+
+test("database rejects duplicate active appointment slots", async (t) => {
   const fixture = await createFixture(t);
   const patient = await fixture.createUser();
   const otherPatient = await fixture.createUser();
@@ -198,13 +229,18 @@ test("already-booked slot cannot be booked again", async (t) => {
     patientId: patient.id,
     doctorId: doctor.doctorId,
     date,
+    status: "scheduled",
   });
-  const result = await book(
-    { ...otherPatient, accessToken: await signIn(otherPatient) },
-    doctor,
-    date,
+
+  await assert.rejects(
+    fixture.createAppointment({
+      patientId: otherPatient.id,
+      doctorId: doctor.doctorId,
+      date,
+      status: "confirmed",
+    }),
+    (error) => error.code === "23505",
   );
-  assert.equal(result.response.status, 409);
 });
 
 test("patient cannot book an appointment as another user", async (t) => {
@@ -373,11 +409,20 @@ test("cancelling an appointment restores its slot to availability", async (t) =>
     },
   );
   assert.equal(cancel.response.status, 200);
-  const available = await slots(doctor, await signIn(replacementPatient), date);
+  const replacementToken = await signIn(replacementPatient);
+  const available = await slots(doctor, replacementToken, date);
   assert.equal(
     available.data.slots.some((slot) => slot.startTime.slice(0, 5) === "09:00"),
     true,
   );
+  const replacement = await book(
+    { ...replacementPatient, accessToken: replacementToken },
+    doctor,
+    date,
+  );
+  assert.equal(replacement.response.status, 201);
+  assert.equal(replacement.data.patient_id, replacementPatient.id);
+  assert.equal(replacement.data.start_time.slice(0, 5), "09:00");
 });
 
 test("appointment status access is scoped to assigned doctors while admins may act", async (t) => {
