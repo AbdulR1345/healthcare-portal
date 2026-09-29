@@ -8,7 +8,12 @@
     "start": "node src/db/migrate.js && node src/index.js",
     "dev": "nodemon src/index.js",
     "db:init": "node src/db/init.js",
-    "db:migrate": "node src/db/migrate.js"
+    "db:migrate": "node src/db/migrate.js",
+    "test": "node test/run.js",
+    "test:local": "node test/local.js",
+    "test:watch": "node test/run.js --watch",
+    "test:coverage": "node test/run.js --experimental-test-coverage",
+    "test:ai": "python -m unittest discover -s ../ai-service -p 'test_*.py' -v"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
