@@ -95,7 +95,11 @@ export const api = {
   },
   chat: {
     conversations: () => request("/chat/conversations"),
-    messages: (userId) => request(`/chat/${userId}`),
+    messages: (userId, { limit = 50, before } = {}) => {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (before) params.set("before", before);
+      return request(`/chat/${userId}?${params}`);
+    },
     send: (body) =>
       request("/chat", { method: "POST", body: JSON.stringify(body) }),
   },

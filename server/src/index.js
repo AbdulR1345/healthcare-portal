@@ -18,6 +18,11 @@ import appointmentRoutes from "./routes/appointments.js";
 import documentRoutes from "./routes/documents.js";
 import chatRoutes from "./routes/chat.js";
 import adminRoutes from "./routes/admin.js";
+import {
+  MAX_MESSAGE_LENGTH,
+  getCareRelationship,
+  isUuid,
+} from "./services/chatAuthorization.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,13 +105,30 @@ app.use((err, _req, res, _next) => {
 });
 
 const onlineUsers = new Map();
+const userRoom = (userId) => `user:${userId}`;
+const conversationRoom = (firstId, secondId) =>
+  `conversation:${[firstId, secondId].sort().join(":")}`;
+
+function acknowledge(callback, result) {
+  if (typeof callback === "function") callback(result);
+}
+
+function reportSocketError(socket, callback, message) {
+  const error = { ok: false, error: message };
+  acknowledge(callback, error);
+  socket.emit("chat_error", { error: message });
+}
 
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error("Authentication required"));
 
   try {
-    socket.user = jwt.verify(token, process.env.JWT_SECRET);
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+    if (!isUuid(user.id) || !["patient", "doctor"].includes(user.role)) {
+      return next(new Error("Invalid token"));
+    }
+    socket.user = user;
     next();
   } catch {
     next(new Error("Invalid token"));
@@ -114,55 +136,173 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
-  onlineUsers.set(socket.user.id, socket.id);
+  const userSockets = onlineUsers.get(socket.user.id) || new Set();
+  userSockets.add(socket.id);
+  onlineUsers.set(socket.user.id, userSockets);
+  socket.join(userRoom(socket.user.id));
+  socket.data.chatRooms = new Map();
 
-  socket.on("join_chat", ({ partnerId }) => {
-    const room = [socket.user.id, partnerId].sort().join("-");
-    socket.join(room);
+  socket.on("join_chat", async (payload = {}, callback) => {
+    const partnerId = payload?.partnerId;
+    if (!isUuid(partnerId) || partnerId === socket.user.id) {
+      return reportSocketError(socket, callback, "Conversation not found");
+    }
+
+    try {
+      const relationship = await getCareRelationship(socket.user.id, partnerId);
+      if (!relationship) {
+        return reportSocketError(socket, callback, "Conversation not found");
+      }
+
+      const room = conversationRoom(socket.user.id, partnerId);
+      await socket.join(room);
+      socket.data.chatRooms.set(room, partnerId);
+      socket
+        .to(room)
+        .emit("presence", { userId: socket.user.id, online: true });
+      acknowledge(callback, {
+        ok: true,
+        partnerOnline: (onlineUsers.get(partnerId)?.size || 0) > 0,
+      });
+      socket.emit("presence", {
+        userId: partnerId,
+        online: (onlineUsers.get(partnerId)?.size || 0) > 0,
+      });
+    } catch (error) {
+      console.error(
+        "Socket conversation authorization failed:",
+        error.code || "unknown",
+      );
+      reportSocketError(socket, callback, "Unable to open conversation");
+    }
   });
 
-  socket.on("send_message", async ({ receiverId, content, appointmentId }) => {
+  socket.on("send_message", async (payload = {}, callback) => {
+    const { receiverId, content } = payload || {};
+    if (!isUuid(receiverId) || receiverId === socket.user.id) {
+      return reportSocketError(socket, callback, "Conversation not found");
+    }
+    if (typeof content !== "string" || !content.trim()) {
+      return reportSocketError(socket, callback, "Message content is required");
+    }
+    if (content.trim().length > MAX_MESSAGE_LENGTH) {
+      return reportSocketError(
+        socket,
+        callback,
+        "Message exceeds the maximum length",
+      );
+    }
+
     try {
+      const relationship = await getCareRelationship(
+        socket.user.id,
+        receiverId,
+      );
+      if (!relationship) {
+        return reportSocketError(socket, callback, "Conversation not found");
+      }
+
+      const room = conversationRoom(socket.user.id, receiverId);
+      await socket.join(room);
+      socket.data.chatRooms.set(room, receiverId);
       const { rows } = await pool.query(
         `INSERT INTO messages (sender_id, receiver_id, content, appointment_id)
          VALUES ($1, $2, $3, $4) RETURNING *`,
-        [socket.user.id, receiverId, content, appointmentId || null],
+        [
+          socket.user.id,
+          receiverId,
+          content.trim(),
+          relationship.appointment_id,
+        ],
       );
 
       const message = rows[0];
-      const room = [socket.user.id, receiverId].sort().join("-");
       io.to(room).emit("new_message", {
         ...message,
         sender_name: socket.user.fullName,
       });
 
-      const receiverSocket = onlineUsers.get(receiverId);
-      if (receiverSocket) {
-        io.to(receiverSocket).emit("notification", {
-          type: "message",
-          from: socket.user.fullName,
-          preview: content.slice(0, 50),
-        });
-      }
+      io.to(userRoom(receiverId)).emit("notification", {
+        type: "message",
+        from: socket.user.fullName,
+      });
+      acknowledge(callback, { ok: true, message });
     } catch (err) {
-      console.error("Socket message error:", err);
-      socket.emit("error", { message: "Failed to send message" });
+      console.error("Socket message error:", err.code || "unknown");
+      reportSocketError(socket, callback, "Failed to send message");
     }
   });
 
-  socket.on("mark_read", async ({ senderId }) => {
-    await pool.query(
-      "UPDATE messages SET is_read = true WHERE receiver_id = $1 AND sender_id = $2",
-      [socket.user.id, senderId],
-    );
-    const senderSocket = onlineUsers.get(senderId);
-    if (senderSocket) {
-      io.to(senderSocket).emit("messages_read", { by: socket.user.id });
+  socket.on("mark_read", async (payload = {}, callback) => {
+    const senderId = payload?.senderId;
+    if (!isUuid(senderId) || senderId === socket.user.id) {
+      return reportSocketError(socket, callback, "Conversation not found");
+    }
+
+    try {
+      const relationship = await getCareRelationship(socket.user.id, senderId);
+      if (!relationship) {
+        return reportSocketError(socket, callback, "Conversation not found");
+      }
+      const room = conversationRoom(socket.user.id, senderId);
+      await pool.query(
+        `UPDATE messages SET is_read = true
+         WHERE receiver_id = $1 AND sender_id = $2 AND is_read = false`,
+        [socket.user.id, senderId],
+      );
+      io.to(room).emit("messages_read", { by: socket.user.id });
+      acknowledge(callback, { ok: true });
+    } catch (error) {
+      console.error("Socket mark-read error:", error.code || "unknown");
+      reportSocketError(socket, callback, "Unable to update read status");
     }
   });
+
+  for (const event of ["typing", "stop_typing"]) {
+    socket.on(event, async (payload = {}, callback) => {
+      const partnerId = payload?.partnerId;
+      if (!isUuid(partnerId) || partnerId === socket.user.id) {
+        return reportSocketError(socket, callback, "Conversation not found");
+      }
+
+      try {
+        const relationship = await getCareRelationship(
+          socket.user.id,
+          partnerId,
+        );
+        if (!relationship) {
+          return reportSocketError(socket, callback, "Conversation not found");
+        }
+        const room = conversationRoom(socket.user.id, partnerId);
+        if (!socket.data.chatRooms.has(room)) {
+          return reportSocketError(
+            socket,
+            callback,
+            "Join the conversation first",
+          );
+        }
+        socket.to(room).emit(event, { userId: socket.user.id });
+        acknowledge(callback, { ok: true });
+      } catch (error) {
+        console.error(
+          "Socket typing authorization failed:",
+          error.code || "unknown",
+        );
+        reportSocketError(socket, callback, "Unable to update typing status");
+      }
+    });
+  }
 
   socket.on("disconnect", () => {
+    const sockets = onlineUsers.get(socket.user.id);
+    sockets?.delete(socket.id);
+    if (sockets?.size) return;
     onlineUsers.delete(socket.user.id);
+    for (const [room] of socket.data.chatRooms) {
+      socket
+        .to(room)
+        .emit("presence", { userId: socket.user.id, online: false });
+    }
   });
 });
 
@@ -187,13 +327,10 @@ cron.schedule("0 * * * *", async () => {
         reminder.id,
       ]);
 
-      const userSocket = onlineUsers.get(reminder.user_id);
-      if (userSocket) {
-        io.to(userSocket).emit("notification", {
-          type: "reminder",
-          message: reminder.message,
-        });
-      }
+      io.to(userRoom(reminder.user_id)).emit("notification", {
+        type: "reminder",
+        message: reminder.message,
+      });
     }
   } catch (err) {
     console.error("Reminder cron error:", err);
