@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect } from 'react';
-import { api } from '../services/api';
+import { createContext, useContext, useState, useEffect } from "react";
+import { api } from "../services/api";
 
 const AuthContext = createContext(null);
 
@@ -8,11 +8,12 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem("token");
     if (token) {
-      api.auth.profile()
+      api.auth
+        .profile()
         .then(setUser)
-        .catch(() => localStorage.removeItem('token'))
+        .catch(() => localStorage.removeItem("token"))
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
@@ -21,21 +22,27 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const { user: userData, token } = await api.auth.login({ email, password });
-    localStorage.setItem('token', token);
+    localStorage.setItem("token", token);
     setUser(userData);
     return userData;
   };
 
   const register = async (formData) => {
     const { user: userData, token } = await api.auth.register(formData);
-    localStorage.setItem('token', token);
+    localStorage.setItem("token", token);
     setUser(userData);
     return userData;
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    setUser(null);
+  const logout = async () => {
+    try {
+      await api.auth.logout();
+    } catch {
+      // Local authentication is cleared even if the server is unavailable.
+    } finally {
+      localStorage.removeItem("token");
+      setUser(null);
+    }
   };
 
   return (
@@ -47,6 +54,6 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

@@ -254,23 +254,47 @@ export async function resetPassword(req, res) {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const { rows: updatedRows } = await pool.query(
-      `UPDATE users
-       SET
-         password_hash = $1,
-         password_reset_token_hash = NULL,
-         password_reset_expires_at = NULL,
-         password_reset_sent_at = NULL
-       WHERE id = $2
-         AND password_reset_token_hash = $3
-         AND password_reset_expires_at > NOW()
-       RETURNING
-         id,
-         email,
-         full_name,
-         role`,
-      [passwordHash, user.id, tokenHash],
-    );
+    const client = await pool.connect();
+    let updatedRows;
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE users
+         SET
+           password_hash = $1,
+           password_reset_token_hash = NULL,
+           password_reset_expires_at = NULL,
+           password_reset_sent_at = NULL
+         WHERE id = $2
+           AND password_reset_token_hash = $3
+           AND password_reset_expires_at > NOW()
+         RETURNING
+           id,
+           email,
+           full_name,
+           role`,
+        [passwordHash, user.id, tokenHash],
+      );
+      updatedRows = result.rows;
+
+      if (updatedRows.length) {
+        await client.query(
+          `UPDATE auth_sessions
+           SET revoked_at = NOW()
+           WHERE user_id = $1
+             AND revoked_at IS NULL`,
+          [user.id],
+        );
+        await client.query("COMMIT");
+      } else {
+        await client.query("ROLLBACK");
+      }
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
 
     // This protects against a token being consumed concurrently.
     if (!updatedRows.length) {

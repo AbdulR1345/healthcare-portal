@@ -16,6 +16,7 @@ async function request(endpoint, options = {}) {
 
   const response = await fetch(apiUrl(`/api${endpoint}`), {
     ...options,
+    credentials: "include",
     headers,
   });
 
@@ -38,6 +39,7 @@ export const api = {
       request("/auth/register", { method: "POST", body: JSON.stringify(body) }),
     login: (body) =>
       request("/auth/login", { method: "POST", body: JSON.stringify(body) }),
+    logout: () => request("/auth/logout", { method: "POST" }),
     profile: () => request("/auth/profile"),
   },
   doctors: {
@@ -75,6 +77,21 @@ export const api = {
       request("/documents/upload", { method: "POST", body: formData }),
     summarize: (id) =>
       request(`/documents/${id}/summarize`, { method: "POST" }),
+    download: async (id) => {
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await fetch(apiUrl(`/api/documents/${id}/download`), {
+        credentials: "include",
+        headers,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || data.message || "Request failed");
+      }
+
+      return response.blob();
+    },
   },
   chat: {
     conversations: () => request("/chat/conversations"),

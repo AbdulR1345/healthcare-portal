@@ -24,6 +24,11 @@ services:
           name: healthcare-ai
           type: web
           envVarKey: RENDER_EXTERNAL_URL
+      - key: AI_SERVICE_TOKEN
+        fromService:
+          name: healthcare-ai
+          type: web
+          envVarKey: AI_SERVICE_TOKEN
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -45,6 +50,8 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false
+      - key: AI_SERVICE_TOKEN
+        generateValue: true
       - key: LLM_MODEL
         value: gpt-4o-mini
 
