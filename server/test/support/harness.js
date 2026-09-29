@@ -96,21 +96,38 @@ async function startSmtpSink() {
 async function startAiStub() {
   let requestCount = 0;
   let lastAuthorization = null;
+  let behavior = {};
+  const requestWaiters = [];
   const server = http.createServer((request, response) => {
     requestCount += 1;
     lastAuthorization = request.headers["x-ai-service-token"] || null;
+    for (const waiter of requestWaiters.splice(0)) {
+      if (requestCount >= waiter.count) waiter.resolve();
+      else requestWaiters.push(waiter);
+    }
     request.resume();
     request.on("end", () => {
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(
-        JSON.stringify({
-          documentType: "Test report",
-          keyInfo: [],
-          abnormalValues: [],
-          followUp: "",
-          disclaimer: "Test response",
-        }),
-      );
+      const currentBehavior = behavior;
+      const sendResponse = () => {
+        response.writeHead(currentBehavior.status || 200, {
+          "Content-Type": "application/json",
+        });
+        response.end(
+          currentBehavior.rawBody ??
+            JSON.stringify(
+              currentBehavior.payload || {
+                documentType: "Test report",
+                keyInfo: [],
+                abnormalValues: [],
+                followUp: "",
+                disclaimer: "Test response",
+              },
+            ),
+        );
+      };
+      if (currentBehavior.delay)
+        setTimeout(sendResponse, currentBehavior.delay);
+      else sendResponse();
     });
   });
   await new Promise((resolve, reject) => {
@@ -124,6 +141,13 @@ async function startAiStub() {
     },
     get lastAuthorization() {
       return lastAuthorization;
+    },
+    setBehavior(next = {}) {
+      behavior = next;
+    },
+    waitForRequestCount(count) {
+      if (requestCount >= count) return Promise.resolve();
+      return new Promise((resolve) => requestWaiters.push({ count, resolve }));
     },
     close: () =>
       new Promise((resolve, reject) =>
@@ -168,7 +192,7 @@ export async function startHarness() {
   const testToken = "integration-test-only-ai-token";
   const child = spawn(process.execPath, ["src/index.js"], {
     cwd: serverDir,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       NODE_ENV: "test",
@@ -177,6 +201,7 @@ export async function startHarness() {
       JWT_SECRET: "integration-test-only-jwt-secret-with-enough-entropy-7821",
       AI_SERVICE_TOKEN: testToken,
       AI_SERVICE_URL: ai.url,
+      AI_PROCESSING_TIMEOUT_MS: "250",
       OPENAI_API_KEY: "",
       MEDICAL_UPLOADS_DIR: uploadDir,
       CLIENT_URL: "http://localhost:5173",
@@ -186,6 +211,13 @@ export async function startHarness() {
       SMTP_PASS: "integration-test-password",
       SMTP_SECURE: "false",
     },
+  });
+  let logs = "";
+  child.stdout.on("data", (chunk) => {
+    logs += chunk.toString("utf8");
+  });
+  child.stderr.on("data", (chunk) => {
+    logs += chunk.toString("utf8");
   });
   const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -202,6 +234,10 @@ export async function startHarness() {
     baseUrl,
     ai,
     aiToken: testToken,
+    uploadDir,
+    get logs() {
+      return logs;
+    },
     async close() {
       if (child.exitCode === null) {
         child.kill();

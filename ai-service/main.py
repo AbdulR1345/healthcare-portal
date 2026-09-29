@@ -1,15 +1,18 @@
 """Healthcare Portal AI Service — FastAPI application."""
 
+import base64
+import binascii
 import os
 import hmac
-from typing import Optional
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
+from starlette.concurrency import run_in_threadpool
 
 from assistant import assist_appointment
-from summarizer import summarize_document
+from summarizer import extract_document_text, summarize_document
 
 load_dotenv()
 
@@ -20,8 +23,26 @@ app = FastAPI(
 )
 
 class SummarizeRequest(BaseModel):
-    text: str
-    file_name: Optional[str] = None
+    text: Optional[str] = Field(default=None, max_length=20000)
+    file_type: Optional[Literal["application/pdf", "image/jpeg", "image/png"]] = None
+    content_base64: Optional[str] = Field(default=None, max_length=14 * 1024 * 1024)
+
+    @model_validator(mode="after")
+    def validate_input(self):
+        if self.content_base64 is not None:
+            if self.file_type is None or self.text is not None:
+                raise ValueError("Provide one supported document payload")
+        elif not isinstance(self.text, str) or not self.text.strip():
+            raise ValueError("Document text is required")
+        return self
+
+
+class SummaryResponse(BaseModel):
+    documentType: str = Field(min_length=1, max_length=200)
+    keyInfo: list[str] = Field(max_length=10)
+    abnormalValues: list[str] = Field(max_length=10)
+    followUp: str = Field(max_length=2000)
+    disclaimer: str = Field(min_length=1, max_length=1000)
 
 
 class AssistRequest(BaseModel):
@@ -48,11 +69,33 @@ async def health():
     return {"status": "ok", "service": "healthcare-ai-service"}
 
 
-@app.post("/summarize", dependencies=[Depends(authenticate_service)])
+@app.post(
+    "/summarize",
+    dependencies=[Depends(authenticate_service)],
+    response_model=SummaryResponse,
+)
 async def summarize(req: SummarizeRequest):
     """Summarize a medical document into plain-language key info."""
-    result = await summarize_document(req.text, req.file_name)
-    return result
+    text = req.text
+    if req.content_base64 is not None:
+        try:
+            content = base64.b64decode(req.content_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=422, detail="Invalid document payload")
+        if not content or len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="Invalid document payload")
+        try:
+            text = await run_in_threadpool(
+                extract_document_text, content, req.file_type
+            )
+        except Exception:
+            raise HTTPException(status_code=422, detail="Document is unreadable")
+
+    result = await summarize_document(text)
+    try:
+        return SummaryResponse.model_validate(result)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Summary generation failed")
 
 
 @app.post("/assist", dependencies=[Depends(authenticate_service)])

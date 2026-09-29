@@ -2,12 +2,47 @@
 
 import os
 import re
+import io
 from typing import Optional
 
 DISCLAIMER = (
     "For informational purposes only. This AI summary is not a substitute "
     "for professional medical advice, diagnosis, or treatment."
 )
+
+MAX_EXTRACTED_TEXT = 20000
+
+
+def extract_document_text(content: bytes, file_type: str) -> str:
+    """Extract bounded text from supported private document bytes."""
+    if file_type == "application/pdf":
+        from pypdf import PdfReader
+
+        if not content.startswith(b"%PDF-"):
+            raise ValueError("Invalid PDF signature")
+        reader = PdfReader(io.BytesIO(content), strict=True)
+        if len(reader.pages) > 100:
+            raise ValueError("PDF page limit exceeded")
+        extracted = "\n".join(
+            (page.extract_text() or "") for page in reader.pages
+        )[:MAX_EXTRACTED_TEXT]
+    elif file_type in ("image/jpeg", "image/png"):
+        from PIL import Image
+        import pytesseract
+
+        image = Image.open(io.BytesIO(content))
+        expected_format = "JPEG" if file_type == "image/jpeg" else "PNG"
+        if image.format != expected_format:
+            raise ValueError("Image format mismatch")
+        if image.width * image.height > 25000000:
+            raise ValueError("Image pixel limit exceeded")
+        extracted = pytesseract.image_to_string(image)[:MAX_EXTRACTED_TEXT]
+    else:
+        raise ValueError("Unsupported document type")
+
+    if not extracted.strip():
+        raise ValueError("No readable text found")
+    return extracted
 
 
 def extract_key_patterns(text: str) -> dict:
