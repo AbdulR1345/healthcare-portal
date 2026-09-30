@@ -267,6 +267,21 @@ Vercel (React)  →  Render (Node API + AI)  →  Render PostgreSQL
    ```
 5. Set `CLIENT_URL` on the API service to your Vercel URL (after Step 2)
 
+### Create the First Production Administrator
+
+After the API has applied database migrations, open the **healthcare-api** Render Shell and run:
+
+```bash
+export ADMIN_EMAIL='admin@your-domain.example'
+read -s -p 'Admin password: ' ADMIN_PASSWORD
+echo
+export ADMIN_PASSWORD
+npm run admin:create
+unset ADMIN_EMAIL ADMIN_PASSWORD
+```
+
+Use a unique password that meets the registration password rules. The command creates a verified admin only when the email does not already exist; it never prints the password.
+
 ### Step 2 — Deploy Frontend (Vercel)
 
 1. Go to [vercel.com](https://vercel.com) → **Import Project**

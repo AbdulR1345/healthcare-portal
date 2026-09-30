@@ -71,6 +71,9 @@ services:
       - key: S3_SECRET_ACCESS_KEY
         sync: false
 
+      - key: S3_ENDPOINT
+        sync: false
+
       - key: S3_FORCE_PATH_STYLE
         value: "false"
 

@@ -239,6 +239,81 @@ test("verified user can log in and receives access and refresh credentials", asy
   assert.ok(login.cookie.startsWith("refreshToken="));
 });
 
+test("admin:create provisions a verified admin and refuses duplicate email", async () => {
+  const email = `provision-${crypto.randomUUID()}@example.com`;
+  const password = "Provision-Admin!8273x";
+  let userId;
+
+  const runAdminCreate = (env) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ["src/scripts/createAdmin.js"], {
+        cwd: process.cwd(),
+        env: { ...process.env, ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout.on("data", (chunk) => (output += chunk.toString("utf8")));
+      child.stderr.on("data", (chunk) => (output += chunk.toString("utf8")));
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code, output }));
+    });
+
+  try {
+    const created = await runAdminCreate({
+      ADMIN_EMAIL: email.toUpperCase(),
+      ADMIN_PASSWORD: password,
+    });
+    assert.equal(created.code, 0, created.output);
+    assert.equal(created.output.includes(password), false);
+
+    const { rows } = await getTestPool().query(
+      "SELECT id, email, role, email_verified, password_hash FROM users WHERE email = $1",
+      [email],
+    );
+    assert.equal(rows.length, 1);
+    userId = rows[0].id;
+    assert.equal(rows[0].role, "admin");
+    assert.equal(rows[0].email_verified, true);
+    assert.notEqual(rows[0].password_hash, password);
+
+    const duplicate = await runAdminCreate({
+      ADMIN_EMAIL: email,
+      ADMIN_PASSWORD: "Another-Admin!6249x",
+    });
+    assert.notEqual(duplicate.code, 0);
+    assert.equal(duplicate.output.includes(password), false);
+
+    const unchanged = await getTestPool().query(
+      "SELECT password_hash FROM users WHERE id = $1",
+      [userId],
+    );
+    assert.equal(unchanged.rows[0].password_hash, rows[0].password_hash);
+  } finally {
+    if (userId) {
+      await getTestPool().query("DELETE FROM users WHERE id = $1", [userId]);
+    }
+  }
+});
+
+test("JWT_EXPIRES_IN controls access-token expiry", async (t) => {
+  const expiryHarness = await startHarness({
+    rateLimitOverrides: { JWT_EXPIRES_IN: "2m" },
+  });
+  t.after(() => expiryHarness.close());
+  const fixture = await createFixture(t);
+  const user = await fixture.createUser();
+  const login = await request(expiryHarness.baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { email: user.email, password: user.password },
+  });
+  assert.equal(login.response.status, 200);
+  const [, encodedPayload] = login.data.token.split(".");
+  const claims = JSON.parse(
+    Buffer.from(encodedPayload, "base64url").toString(),
+  );
+  assert.equal(claims.exp - claims.iat, 120);
+});
+
 test("login is blocked until email verification", async (t) => {
   const fixture = await createFixture(t);
   const user = await fixture.createUser("patient", { emailVerified: false });
@@ -344,6 +419,64 @@ test("refresh token rotation invalidates the prior refresh session", async (t) =
     cookie: independentLogin.cookie,
   });
   assert.equal(independent.response.status, 200);
+});
+
+test("production refresh and logout require a trusted frontend origin", async (t) => {
+  const productionHarness = await startHarness({ nodeEnv: "production" });
+  t.after(() => productionHarness.close());
+  const fixture = await createFixture(t);
+  const user = await fixture.createUser();
+  const login = await request(productionHarness.baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { email: user.email, password: user.password },
+  });
+  assert.equal(login.response.status, 200);
+  const cookie = refreshCookie(login.response);
+
+  const rejectedRefresh = await request(
+    productionHarness.baseUrl,
+    "/api/auth/refresh",
+    {
+      method: "POST",
+      cookie,
+      headers: { Origin: "https://attacker.example" },
+    },
+  );
+  assert.equal(rejectedRefresh.response.status, 403);
+
+  const allowedRefresh = await request(
+    productionHarness.baseUrl,
+    "/api/auth/refresh",
+    {
+      method: "POST",
+      cookie,
+      headers: { Origin: "http://localhost:5173" },
+    },
+  );
+  assert.equal(allowedRefresh.response.status, 200);
+  const rotatedCookie = refreshCookie(allowedRefresh.response);
+
+  const rejectedLogout = await request(
+    productionHarness.baseUrl,
+    "/api/auth/logout",
+    {
+      method: "POST",
+      cookie: rotatedCookie,
+      headers: { Origin: "https://attacker.example" },
+    },
+  );
+  assert.equal(rejectedLogout.response.status, 403);
+
+  const allowedLogout = await request(
+    productionHarness.baseUrl,
+    "/api/auth/logout",
+    {
+      method: "POST",
+      cookie: rotatedCookie,
+      headers: { Origin: "http://localhost:5173" },
+    },
+  );
+  assert.equal(allowedLogout.response.status, 200);
 });
 
 test("logout revokes the refresh session and clears its cookie", async (t) => {
