@@ -14,6 +14,12 @@ import {
   resetPassword,
 } from "../controllers/passwordResetController.js";
 import { authenticate } from "../middleware/auth.js";
+import {
+  emailVerificationLimiter,
+  loginLimiter,
+  passwordResetLimiter,
+  registrationLimiter,
+} from "../middleware/rateLimit.js";
 
 const router = Router();
 
@@ -88,6 +94,7 @@ const passwordValidator = body("password")
 
 router.post(
   "/register",
+  registrationLimiter,
   [
     emailValidator,
     passwordValidator,
@@ -182,6 +189,7 @@ router.post(
 
 router.post(
   "/login",
+  loginLimiter,
   [
     body("email")
       .isString()
@@ -213,10 +221,11 @@ router.post(
   login,
 );
 
-router.get("/verify-email", verifyEmail);
+router.get("/verify-email", emailVerificationLimiter, verifyEmail);
 
 router.post(
   "/resend-verification",
+  emailVerificationLimiter,
   [
     body("email")
       .isString()
@@ -238,6 +247,7 @@ router.post(
  */
 router.post(
   "/forgot-password",
+  passwordResetLimiter,
   [
     body("email")
       .isString()
@@ -259,6 +269,7 @@ router.post(
  */
 router.post(
   "/reset-password",
+  passwordResetLimiter,
   [
     body("token")
       .isString()

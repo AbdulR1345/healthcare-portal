@@ -281,13 +281,16 @@ Vercel (React)  →  Render (Node API + AI)  →  Render PostgreSQL
 
 **Render — healthcare-api**
 
-| Variable         | Value                           |
-| ---------------- | ------------------------------- |
-| `DATABASE_URL`   | Auto from Render PostgreSQL     |
-| `JWT_SECRET`     | Auto-generated                  |
-| `CLIENT_URL`     | `https://your-app.vercel.app`   |
-| `AI_SERVICE_URL` | Auto from healthcare-ai service |
-| `SMTP_*`         | Optional email settings         |
+| Variable           | Value                                                               |
+| ------------------ | ------------------------------------------------------------------- |
+| `DATABASE_URL`     | Auto from Render PostgreSQL                                         |
+| `JWT_SECRET`       | Auto-generated                                                      |
+| `CLIENT_URL`       | `https://your-app.vercel.app`                                       |
+| `CLINIC_TIME_ZONE` | IANA timezone for clinic scheduling, for example `America/New_York` |
+| `AI_SERVICE_URL`   | Auto from healthcare-ai service                                     |
+| `SMTP_*`           | Optional email settings                                             |
+
+The API defaults `CLINIC_TIME_ZONE` to UTC if unset. Rate-limit counters are stored in PostgreSQL and shared across API instances; the API start command applies their migration automatically. `/api/health` is a lightweight liveness check, while `/api/ready` verifies PostgreSQL availability and is used by Render.
 
 **Render — healthcare-ai**
 

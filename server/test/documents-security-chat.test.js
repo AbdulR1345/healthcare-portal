@@ -210,6 +210,37 @@ test("document uploads reject mismatched types and invalid file signatures", asy
   assert.equal(signatureResult.response.status, 415);
 });
 
+test("document uploads return controlled errors for malformed and oversized requests", async (t) => {
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const token = await signIn(patient);
+  const malformed = await request(harness.baseUrl, "/api/documents/upload", {
+    token,
+    method: "POST",
+    headers: { "Content-Type": "multipart/form-data" },
+    body: "malformed",
+  });
+  assert.equal(malformed.response.status, 400);
+  assert.equal(malformed.data.error, "Malformed document upload");
+  assert.doesNotMatch(JSON.stringify(malformed.data), /[A-Z]:\\|\/home\//);
+
+  const tooLarge = new FormData();
+  tooLarge.set(
+    "file",
+    new Blob([Buffer.alloc(10 * 1024 * 1024 + 1)], {
+      type: "application/pdf",
+    }),
+    "large.pdf",
+  );
+  const oversized = await request(harness.baseUrl, "/api/documents/upload", {
+    token,
+    method: "POST",
+    body: tooLarge,
+  });
+  assert.equal(oversized.response.status, 413);
+  assert.equal(oversized.data.error, "Uploaded file exceeds the 10 MB limit");
+});
+
 test("an unrelated doctor receives forbidden for a patient's document", async (t) => {
   const fixture = await createFixture(t);
   const patient = await fixture.createUser();

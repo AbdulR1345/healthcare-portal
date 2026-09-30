@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -225,7 +226,11 @@ async function waitForApi(child, baseUrl) {
   throw new Error("API process did not become ready in time.");
 }
 
-export async function startHarness({ nodeEnv = "test" } = {}) {
+export async function startHarness({
+  nodeEnv = "test",
+  rateLimitOverrides = {},
+  databaseUrlOverride,
+} = {}) {
   if (
     !process.env.TEST_DATABASE_URL ||
     process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL
@@ -250,7 +255,14 @@ export async function startHarness({ nodeEnv = "test" } = {}) {
       ...process.env,
       NODE_ENV: nodeEnv,
       PORT: String(port),
-      DATABASE_URL: process.env.TEST_DATABASE_URL,
+      RATE_LIMIT_NAMESPACE: crypto.randomUUID(),
+      API_RATE_LIMIT_MAX: "10000",
+      LOGIN_RATE_LIMIT_MAX: "10000",
+      REGISTRATION_RATE_LIMIT_MAX: "10000",
+      PASSWORD_RESET_RATE_LIMIT_MAX: "10000",
+      EMAIL_VERIFICATION_RATE_LIMIT_MAX: "10000",
+      CLINIC_TIME_ZONE: "America/Los_Angeles",
+      DATABASE_URL: databaseUrlOverride || process.env.TEST_DATABASE_URL,
       JWT_SECRET:
         nodeEnv === "production"
           ? "G7!qN4#vR9@xK2$mP8^dL5&cW1*zT6bH3uF0yA"
@@ -273,6 +285,7 @@ export async function startHarness({ nodeEnv = "test" } = {}) {
       SMTP_USER: "integration-test-user",
       SMTP_PASS: "integration-test-password",
       SMTP_SECURE: "false",
+      ...rateLimitOverrides,
     },
   });
   let logs = "";
@@ -302,6 +315,9 @@ export async function startHarness({ nodeEnv = "test" } = {}) {
     uploadDir,
     get logs() {
       return logs;
+    },
+    get exitCode() {
+      return child.exitCode;
     },
     async close() {
       if (child.exitCode === null) {

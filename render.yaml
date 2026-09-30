@@ -5,7 +5,7 @@ services:
     rootDir: server
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /api/health
+    healthCheckPath: /api/ready
     envVars:
       - key: NODE_ENV
         value: production
@@ -19,6 +19,8 @@ services:
           property: connectionString
       - key: CLIENT_URL
         sync: false
+      - key: CLINIC_TIME_ZONE
+        value: UTC
       - key: AI_SERVICE_URL
         fromService:
           name: healthcare-ai

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import { after, before, test } from "node:test";
 import { createFixture, closeTestPool, getTestPool } from "./support/db.js";
@@ -37,6 +38,120 @@ test("production email configuration fails closed without SMTP", () => {
   ]) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
+  }
+});
+
+test("health, readiness, and security headers are available", async () => {
+  const health = await request(harness.baseUrl, "/api/health");
+  assert.equal(health.response.status, 200);
+  assert.equal(health.data.status, "ok");
+  assert.equal(
+    health.response.headers.get("x-content-type-options"),
+    "nosniff",
+  );
+  assert.equal(health.response.headers.get("x-frame-options"), "SAMEORIGIN");
+  assert.equal(health.response.headers.get("x-powered-by"), null);
+
+  const readiness = await request(harness.baseUrl, "/api/ready");
+  assert.equal(readiness.response.status, 200);
+  assert.equal(readiness.data.status, "ready");
+});
+
+test("readiness returns a sanitized 503 when PostgreSQL is unavailable", async () => {
+  const unavailableHarness = await startHarness({
+    databaseUrlOverride: "postgres://test:test@127.0.0.1:1/healthcare_test",
+  });
+  try {
+    const readiness = await request(unavailableHarness.baseUrl, "/api/ready");
+    assert.equal(readiness.response.status, 503);
+    assert.deepEqual(readiness.data, { error: "Service unavailable" });
+  } finally {
+    await unavailableHarness.close();
+  }
+});
+
+test("concurrent migration runners complete under the database lock", async () => {
+  const runMigration = () =>
+    new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ["src/db/migrate.js"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          DATABASE_URL: process.env.TEST_DATABASE_URL,
+        },
+        stdio: "ignore",
+      });
+      child.once("error", reject);
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+
+  const results = await Promise.all([runMigration(), runMigration()]);
+  assert.deepEqual(results, [
+    { code: 0, signal: null },
+    { code: 0, signal: null },
+  ]);
+});
+
+test(
+  "SIGTERM drains Socket.IO, HTTP, and database resources",
+  { skip: process.platform === "win32" },
+  async () => {
+    const shutdownHarness = await startHarness();
+    await shutdownHarness.close();
+    assert.equal(shutdownHarness.exitCode, 0);
+    assert.match(
+      shutdownHarness.logs,
+      /Received SIGTERM; shutting down gracefully\./,
+    );
+  },
+);
+
+test("development ignores untrusted forwarded IP headers", async (t) => {
+  const fixture = await createFixture(t);
+  const user = await fixture.createUser();
+  const result = await request(harness.baseUrl, "/api/auth/login", {
+    method: "POST",
+    headers: { "X-Forwarded-For": "203.0.113.88" },
+    body: { email: user.email, password: user.password },
+  });
+  assert.equal(result.response.status, 200);
+
+  const { rows } = await getTestPool().query(
+    "SELECT ip_address::text AS ip_address FROM auth_sessions WHERE id = $1",
+    [result.data.session.id],
+  );
+  assert.notEqual(rows[0].ip_address, "203.0.113.88");
+});
+
+test("sensitive authentication routes return a clean 429 when limited", async () => {
+  const limitedHarness = await startHarness({
+    rateLimitOverrides: { LOGIN_RATE_LIMIT_MAX: "1" },
+  });
+  try {
+    const options = {
+      method: "POST",
+      body: { email: "nobody@example.com", password: "incorrect" },
+    };
+    const first = await request(
+      limitedHarness.baseUrl,
+      "/api/auth/login",
+      options,
+    );
+    const second = await request(
+      limitedHarness.baseUrl,
+      "/api/auth/login",
+      options,
+    );
+    assert.equal(first.response.status, 401);
+    assert.equal(second.response.status, 429);
+    assert.equal(
+      second.data.error,
+      "Too many requests. Please try again later.",
+    );
+    assert.ok(second.response.headers.has("retry-after"));
+  } finally {
+    await limitedHarness.close();
   }
 });
 
@@ -213,6 +328,7 @@ test("refresh token rotation invalidates the prior refresh session", async (t) =
   assert.equal(rotated.response.status, 200);
   assert.ok(typeof rotated.data.token === "string");
   const replacementCookie = refreshCookie(rotated.response);
+  const independentLogin = await loginAccount(user.email, user.password);
   const replay = await request(harness.baseUrl, "/api/auth/refresh", {
     method: "POST",
     cookie: login.cookie,
@@ -222,7 +338,12 @@ test("refresh token rotation invalidates the prior refresh session", async (t) =
     method: "POST",
     cookie: replacementCookie,
   });
-  assert.equal(replacement.response.status, 200);
+  assert.equal(replacement.response.status, 401);
+  const independent = await request(harness.baseUrl, "/api/auth/refresh", {
+    method: "POST",
+    cookie: independentLogin.cookie,
+  });
+  assert.equal(independent.response.status, 200);
 });
 
 test("logout revokes the refresh session and clears its cookie", async (t) => {

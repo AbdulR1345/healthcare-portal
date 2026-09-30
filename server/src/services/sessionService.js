@@ -56,12 +56,31 @@ export async function rotateSession({ refreshToken, userAgent, ipAddress }) {
   try {
     await client.query("BEGIN");
 
+    const { rows: ownerRows } = await client.query(
+      `SELECT user_id
+       FROM auth_sessions
+       WHERE refresh_token_hash = $1
+       LIMIT 1`,
+      [refreshTokenHash],
+    );
+
+    if (!ownerRows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [ownerRows[0].user_id],
+    );
+
     const { rows } = await client.query(
       `SELECT
         id,
         user_id,
         expires_at,
-        revoked_at
+        revoked_at,
+        replaced_by_session_id
        FROM auth_sessions
        WHERE refresh_token_hash = $1
        LIMIT 1
@@ -75,6 +94,27 @@ export async function rotateSession({ refreshToken, userAgent, ipAddress }) {
     }
 
     const session = rows[0];
+
+    if (session.revoked_at && session.replaced_by_session_id) {
+      await client.query(
+        `WITH RECURSIVE session_family(id) AS (
+           SELECT id FROM auth_sessions WHERE id = $1
+           UNION
+           SELECT adjacent.id
+           FROM session_family family
+           JOIN auth_sessions current_session ON current_session.id = family.id
+           JOIN auth_sessions adjacent
+             ON adjacent.replaced_by_session_id = current_session.id
+             OR current_session.replaced_by_session_id = adjacent.id
+         )
+         UPDATE auth_sessions
+         SET revoked_at = COALESCE(revoked_at, NOW())
+         WHERE id IN (SELECT id FROM session_family)`,
+        [session.id],
+      );
+      await client.query("COMMIT");
+      return null;
+    }
 
     if (
       session.revoked_at ||

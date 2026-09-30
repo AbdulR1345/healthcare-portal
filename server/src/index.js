@@ -3,6 +3,7 @@ import http from "node:http";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import cron from "node-cron";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
@@ -26,6 +27,7 @@ import {
   getCareRelationship,
   isUuid,
 } from "./services/chatAuthorization.js";
+import { globalApiLimiter } from "./middleware/rateLimit.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +51,7 @@ if (isProduction && (isWeakSecret || isPlaceholderSecret)) {
 
 const app = express();
 const server = http.createServer(app);
+app.set("trust proxy", isProduction ? 1 : false);
 
 const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
   .split(",")
@@ -73,6 +76,12 @@ const io = new Server(server, {
   cors: corsOptions,
 });
 
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    hsts: isProduction ? { maxAge: 31536000, includeSubDomains: true } : false,
+  }),
+);
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "100kb" }));
 app.use(cookieParser());
@@ -81,6 +90,17 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "healthcare-portal-api" });
 });
 
+app.get("/api/ready", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    return res.json({ status: "ready", service: "healthcare-portal-api" });
+  } catch (err) {
+    console.error("Readiness check failed:", err.code || "unknown");
+    return res.status(503).json({ error: "Service unavailable" });
+  }
+});
+
+app.use("/api", globalApiLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/appointments", appointmentRoutes);
@@ -88,7 +108,11 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/admin", adminRoutes);
 
-app.use((err, _req, res, _next) => {
+app.use((err, req, res, _next) => {
+  if (err.code === "RATE_LIMIT_STORE_UNAVAILABLE") {
+    return res.status(503).json({ error: "Service temporarily unavailable" });
+  }
+
   if (err.code === "LIMIT_FILE_SIZE") {
     return res
       .status(413)
@@ -97,6 +121,13 @@ app.use((err, _req, res, _next) => {
 
   if (err.status === 415) {
     return res.status(415).json({ error: "Unsupported document file type" });
+  }
+
+  if (
+    err.name === "MulterError" ||
+    (req.is("multipart/form-data") && err.status !== 413)
+  ) {
+    return res.status(400).json({ error: "Malformed document upload" });
   }
 
   if (err.type === "entity.too.large") {
@@ -316,7 +347,7 @@ io.on("connection", (socket) => {
   });
 });
 
-cron.schedule("0 * * * *", async () => {
+const reminderTask = cron.schedule("0 * * * *", async () => {
   try {
     const { rows } = await pool.query(
       `SELECT r.*, u.email FROM reminders r
@@ -340,6 +371,8 @@ cron.schedule("0 * * * *", async () => {
         message: reminder.message,
       });
     }
+
+    await pool.query("DELETE FROM api_rate_limits WHERE reset_at < NOW()");
   } catch (err) {
     console.error("Reminder cron error:", err.code || "unknown");
   }
@@ -349,5 +382,33 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Healthcare Portal API running on port ${PORT}`);
 });
+
+let isShuttingDown = false;
+async function shutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`Received ${signal}; shutting down gracefully.`);
+  reminderTask.stop();
+
+  const forcedShutdown = setTimeout(() => {
+    server.closeAllConnections();
+    io.disconnectSockets(true);
+    console.error("Graceful shutdown deadline exceeded.");
+    process.exit(1);
+  }, 10000);
+  forcedShutdown.unref();
+
+  try {
+    await new Promise((resolve) => io.close(resolve));
+    await pool.end();
+    clearTimeout(forcedShutdown);
+  } catch (error) {
+    console.error("Graceful shutdown failed:", error.code || "unknown");
+    process.exitCode = 1;
+  }
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
 
 export { app, io };

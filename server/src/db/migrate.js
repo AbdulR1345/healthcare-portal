@@ -25,8 +25,11 @@ async function getMigrationFiles() {
 
 async function migrate() {
   const client = await pool.connect();
+  let migrationLockAcquired = false;
 
   try {
+    await client.query("SELECT pg_advisory_lock(722026, 1)");
+    migrationLockAcquired = true;
     await ensureMigrationsTable(client);
 
     const migrationFiles = await getMigrationFiles();
@@ -76,6 +79,11 @@ async function migrate() {
     console.error("Database migration failed:", error.code || "unknown");
     process.exitCode = 1;
   } finally {
+    if (migrationLockAcquired) {
+      await client
+        .query("SELECT pg_advisory_unlock(722026, 1)")
+        .catch(() => {});
+    }
     client.release();
     await pool.end();
   }

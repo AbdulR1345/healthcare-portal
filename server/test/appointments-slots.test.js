@@ -4,6 +4,7 @@ import {
   closeTestPool,
   createFixture,
   futureDateForWeekday,
+  getTestPool,
 } from "./support/db.js";
 import { startHarness, request } from "./support/harness.js";
 
@@ -96,6 +97,37 @@ test("booked appointment slots disappear from availability", async (t) => {
   assert.equal(
     result.data.slots.some((slot) => slot.startTime.slice(0, 5) === "09:30"),
     true,
+  );
+});
+
+test("appointment dates and reminders preserve clinic-local calendar values", async (t) => {
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const doctor = await fixture.createDoctor({ dayOfWeek: 1 });
+  const date = futureDateForWeekday(1);
+  const result = await book(
+    { ...patient, accessToken: await signIn(patient) },
+    doctor,
+    date,
+  );
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.appointment_date, date);
+
+  const { rows } = await getTestPool().query(
+    `SELECT
+       a.appointment_date::text AS appointment_date,
+       to_char(r.scheduled_for AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD HH24:MI:SS') AS reminder_local
+     FROM appointments a
+     JOIN reminders r ON r.appointment_id = a.id
+     WHERE a.id = $1`,
+    [result.data.id],
+  );
+  const expectedReminderDate = new Date(`${date}T00:00:00Z`);
+  expectedReminderDate.setUTCDate(expectedReminderDate.getUTCDate() - 1);
+  assert.equal(rows[0].appointment_date, date);
+  assert.equal(
+    rows[0].reminder_local,
+    `${expectedReminderDate.toISOString().slice(0, 10)} 09:00:00`,
   );
 });
 

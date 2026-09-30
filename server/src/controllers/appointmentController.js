@@ -30,6 +30,18 @@ const ALLOWED_TRANSITIONS = {
   },
 };
 
+const CLINIC_TIME_ZONE = process.env.CLINIC_TIME_ZONE || "UTC";
+const clinicDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: CLINIC_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
 function isValidDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
@@ -63,13 +75,16 @@ function timeToMinutes(value) {
 }
 
 function isFutureAppointment(appointmentDate, startTime) {
-  const appointmentDateTime = new Date(
-    `${appointmentDate}T${normalizeTime(startTime)}`,
+  const localParts = Object.fromEntries(
+    clinicDateTimeFormatter
+      .formatToParts(new Date())
+      .map(({ type, value }) => [type, value]),
   );
-
+  const localDate = `${localParts.year}-${localParts.month}-${localParts.day}`;
+  const localTime = `${localParts.hour}:${localParts.minute}:${localParts.second}`;
   return (
-    !Number.isNaN(appointmentDateTime.getTime()) &&
-    appointmentDateTime.getTime() > Date.now()
+    appointmentDate > localDate ||
+    (appointmentDate === localDate && normalizeTime(startTime) > localTime)
   );
 }
 
@@ -207,12 +222,6 @@ async function createReminder(
   appointmentDate,
   startTime,
 ) {
-  const reminderDate = new Date(
-    `${appointmentDate}T${normalizeTime(startTime)}`,
-  );
-
-  reminderDate.setDate(reminderDate.getDate() - 1);
-
   await client.query(
     `INSERT INTO reminders (
        appointment_id,
@@ -220,14 +229,16 @@ async function createReminder(
        message,
        scheduled_for
      )
-     VALUES ($1, $2, $3, $4)`,
+    VALUES ($1, $2, $3, (($4::date + $5::time - INTERVAL '1 day') AT TIME ZONE $6))`,
     [
       appointmentId,
       patientId,
       `Your appointment with ${
         doctorName || "your doctor"
       } is scheduled for tomorrow at ${startTime.slice(0, 5)}`,
-      reminderDate,
+      appointmentDate,
+      normalizeTime(startTime),
+      CLINIC_TIME_ZONE,
     ],
   );
 }
@@ -238,19 +249,18 @@ async function updateReminder(
   appointmentDate,
   startTime,
 ) {
-  const reminderDate = new Date(
-    `${appointmentDate}T${normalizeTime(startTime)}`,
-  );
-
-  reminderDate.setDate(reminderDate.getDate() - 1);
-
   await client.query(
     `UPDATE reminders
      SET
-       scheduled_for = $1,
+       scheduled_for = (($1::date + $2::time - INTERVAL '1 day') AT TIME ZONE $4),
        sent = FALSE
-     WHERE appointment_id = $2`,
-    [reminderDate, appointmentId],
+     WHERE appointment_id = $3`,
+    [
+      appointmentDate,
+      normalizeTime(startTime),
+      appointmentId,
+      CLINIC_TIME_ZONE,
+    ],
   );
 }
 
