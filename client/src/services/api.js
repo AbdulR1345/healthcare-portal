@@ -1,6 +1,37 @@
 import { apiUrl } from "../config";
 
-async function request(endpoint, options = {}) {
+let refreshRequest;
+
+function clearAccessToken() {
+  localStorage.removeItem("token");
+  window.dispatchEvent(new Event("auth:expired"));
+}
+
+async function refreshAccessToken() {
+  if (!refreshRequest) {
+    refreshRequest = fetch(apiUrl("/api/auth/refresh"), {
+      method: "POST",
+      credentials: "include",
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.token) throw new Error("Session expired");
+        localStorage.setItem("token", data.token);
+        return data.token;
+      })
+      .catch(() => {
+        clearAccessToken();
+        return null;
+      })
+      .finally(() => {
+        refreshRequest = null;
+      });
+  }
+
+  return refreshRequest;
+}
+
+async function request(endpoint, options = {}, canRefresh = true) {
   const token = localStorage.getItem("token");
   const headers = {
     ...options.headers,
@@ -20,14 +51,30 @@ async function request(endpoint, options = {}) {
     headers,
   });
 
+  if (
+    response.status === 401 &&
+    token &&
+    canRefresh &&
+    !/^\/auth\/(login|register|refresh|logout|verify-email|resend-verification|forgot-password|reset-password)(\?|$)/.test(
+      endpoint,
+    )
+  ) {
+    const refreshedToken = await refreshAccessToken();
+    if (refreshedToken) return request(endpoint, options, false);
+  }
+
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    if (Array.isArray(data.errors) && data.errors.length) {
-      throw new Error(data.errors.map(({ msg }) => msg).join(". "));
-    }
-
-    throw new Error(data.error || data.message || "Request failed");
+    const error = new Error(
+      Array.isArray(data.errors) && data.errors.length
+        ? data.errors.map(({ msg }) => msg).join(". ")
+        : data.error || data.message || "Request failed",
+    );
+    error.status = response.status;
+    error.code = data.code;
+    error.errors = data.errors || [];
+    throw error;
   }
 
   return data;
@@ -41,6 +88,23 @@ export const api = {
       request("/auth/login", { method: "POST", body: JSON.stringify(body) }),
     logout: () => request("/auth/logout", { method: "POST" }),
     profile: () => request("/auth/profile"),
+    verifyEmail: (token) =>
+      request(`/auth/verify-email?${new URLSearchParams({ token })}`),
+    resendVerification: (email) =>
+      request("/auth/resend-verification", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }),
+    forgotPassword: (email) =>
+      request("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }),
+    resetPassword: (body) =>
+      request("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
   },
   doctors: {
     search: (params) => {
@@ -79,11 +143,19 @@ export const api = {
       request(`/documents/${id}/summarize`, { method: "POST" }),
     download: async (id) => {
       const token = localStorage.getItem("token");
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await fetch(apiUrl(`/api/documents/${id}/download`), {
-        credentials: "include",
-        headers,
-      });
+      const downloadWithToken = (accessToken) =>
+        fetch(apiUrl(`/api/documents/${id}/download`), {
+          credentials: "include",
+          headers: accessToken
+            ? { Authorization: `Bearer ${accessToken}` }
+            : {},
+        });
+      let response = await downloadWithToken(token);
+
+      if (response.status === 401 && token) {
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) response = await downloadWithToken(refreshedToken);
+      }
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));

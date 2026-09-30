@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { ArrowLeft, LockKeyhole, MessageCircle, Send } from "lucide-react";
 import { io } from "socket.io-client";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
@@ -15,6 +16,7 @@ export default function Chat() {
   const [olderLoading, setOlderLoading] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [liveNotice, setLiveNotice] = useState("");
   const [messageError, setMessageError] = useState("");
   const [partnerOnline, setPartnerOnline] = useState(false);
   const [partnerTyping, setPartnerTyping] = useState(false);
@@ -26,53 +28,93 @@ export default function Chat() {
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
+    let active = true;
+
+    const connectSocket = () => {
+      const token = localStorage.getItem("token");
+      socketRef.current = io(socketUrl(), { auth: { token } });
+
+      socketRef.current.on("new_message", (msg) => {
+        const currentPartner = activePartnerRef.current;
+        const partnerId =
+          msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.partner_id === partnerId
+              ? {
+                  ...conversation,
+                  last_message: msg.content,
+                  last_at: msg.created_at,
+                  unread_count:
+                    msg.sender_id === user.id ||
+                    currentPartner?.partner_id === partnerId
+                      ? 0
+                      : Number(conversation.unread_count || 0) + 1,
+                }
+              : conversation,
+          ),
+        );
+        if (
+          currentPartner?.partner_id === msg.sender_id &&
+          msg.receiver_id === user.id
+        ) {
+          socketRef.current?.emit("mark_read", { senderId: msg.sender_id });
+        }
+        if (
+          currentPartner &&
+          (msg.sender_id === currentPartner.partner_id ||
+            msg.receiver_id === currentPartner.partner_id)
+        ) {
+          setMessages((previous) =>
+            previous.some((item) => item.id === msg.id)
+              ? previous
+              : [...previous, msg],
+          );
+        }
+      });
+
+      socketRef.current.on("chat_error", ({ error }) => setMessageError(error));
+      socketRef.current.on("connect_error", () =>
+        setChatError("Real-time chat is unavailable."),
+      );
+      socketRef.current.on("presence", ({ userId, online }) => {
+        if (userId === activePartnerRef.current?.partner_id)
+          setPartnerOnline(online);
+      });
+      socketRef.current.on("typing", ({ userId }) => {
+        if (userId === activePartnerRef.current?.partner_id)
+          setPartnerTyping(true);
+      });
+      socketRef.current.on("stop_typing", ({ userId }) => {
+        if (userId === activePartnerRef.current?.partner_id)
+          setPartnerTyping(false);
+      });
+      socketRef.current.on("notification", (notif) => {
+        setLiveNotice(`New message from ${notif.from || "your care team"}`);
+        window.setTimeout(() => setLiveNotice(""), 5000);
+      });
+    };
+
     api.chat
       .conversations()
-      .then(setConversations)
-      .catch((error) => setChatError(error.message))
-      .finally(() => setLoading(false));
+      .then((result) => {
+        if (active) setConversations(result);
+      })
+      .catch((error) => {
+        if (active) setChatError(error.message);
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+        connectSocket();
+      });
 
-    const token = localStorage.getItem("token");
-    socketRef.current = io(socketUrl(), {
-      auth: { token },
-    });
-
-    socketRef.current.on("new_message", (msg) => {
-      const active = activePartnerRef.current;
-      if (
-        active &&
-        (msg.sender_id === active.partner_id ||
-          msg.receiver_id === active.partner_id)
-      ) {
-        setMessages((prev) =>
-          prev.some((item) => item.id === msg.id) ? prev : [...prev, msg],
-        );
-      }
-    });
-
-    socketRef.current.on("chat_error", ({ error }) => setMessageError(error));
-    socketRef.current.on("connect_error", () =>
-      setChatError("Real-time chat is unavailable."),
-    );
-    socketRef.current.on("presence", ({ userId, online }) => {
-      if (userId === activePartnerRef.current?.partner_id)
-        setPartnerOnline(online);
-    });
-    socketRef.current.on("typing", ({ userId }) => {
-      if (userId === activePartnerRef.current?.partner_id)
-        setPartnerTyping(true);
-    });
-    socketRef.current.on("stop_typing", ({ userId }) => {
-      if (userId === activePartnerRef.current?.partner_id)
-        setPartnerTyping(false);
-    });
-
-    socketRef.current.on("notification", (notif) => {
-      console.log("Notification:", notif);
-    });
-
-    return () => socketRef.current?.disconnect();
-  }, []);
+    return () => {
+      active = false;
+      clearTimeout(typingTimeoutRef.current);
+      socketRef.current?.disconnect();
+    };
+  }, [user.id]);
 
   useEffect(() => {
     activePartnerRef.current = activePartner;
@@ -87,6 +129,13 @@ export default function Chat() {
       .messages(activePartner.partner_id)
       .then((result) => {
         setMessages(result);
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.partner_id === activePartner.partner_id
+              ? { ...conversation, unread_count: 0 }
+              : conversation,
+          ),
+        );
         setHasOlderMessages(result.length === 50);
       })
       .catch((error) => setMessageError(error.message))
@@ -172,6 +221,17 @@ export default function Chat() {
           ...prev,
           { ...msg, sender_name: user.full_name },
         ]);
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.partner_id === activePartner.partner_id
+              ? {
+                  ...conversation,
+                  last_message: content,
+                  last_at: msg.created_at,
+                }
+              : conversation,
+          ),
+        );
       }
     } catch (err) {
       setMessageError(err.message);
@@ -191,124 +251,158 @@ export default function Chat() {
     }, 800);
   };
 
-  if (loading) return <div className="loading">Loading conversations...</div>;
+  const loadConversations = async () => {
+    setChatError("");
+    setLoading(true);
+    try {
+      setConversations(await api.chat.conversations());
+    } catch (error) {
+      setChatError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading)
+    return (
+      <main className="container chat-page">
+        <div className="skeleton dashboard-heading-skeleton" />
+        <div className="skeleton chat-skeleton" />
+      </main>
+    );
 
   return (
-    <div className="container">
-      <h1 style={{ marginBottom: "0.5rem" }}>Messages</h1>
-      <p style={{ color: "var(--text-muted)", marginBottom: "2rem" }}>
-        Chat with your healthcare providers in real time
-      </p>
-
-      <div
-        className="card"
-        style={{
-          display: "flex",
-          height: "500px",
-          padding: 0,
-          overflow: "hidden",
-        }}
+    <main className="container chat-page">
+      <header className="page-heading">
+        <p className="eyebrow">Care team</p>
+        <h1>Messages</h1>
+        <p>Private conversations with people connected to your care.</p>
+      </header>
+      {liveNotice && (
+        <div className="alert alert-info chat-notice" role="status">
+          {liveNotice}
+        </div>
+      )}
+      <section
+        className={`chat-workspace ${activePartner ? "has-active-chat" : ""}`}
+        aria-label="Secure messages"
       >
-        <div
-          style={{
-            width: "280px",
-            borderRight: "1px solid var(--border)",
-            overflowY: "auto",
-          }}
-        >
+        <aside className="conversation-sidebar">
+          <div className="conversation-sidebar-head">
+            <div>
+              <h2>Conversations</h2>
+              <span>{conversations.length} connected</span>
+            </div>
+            <MessageCircle size={17} />
+          </div>
           {chatError && (
-            <div
-              role="alert"
-              style={{ padding: "1rem", color: "var(--danger)" }}
-            >
+            <div className="chat-inline-error" role="alert">
               {chatError}
+              <button className="text-button" onClick={loadConversations}>
+                Retry
+              </button>
             </div>
           )}
-          {conversations.length === 0 ? (
-            <div className="empty-state" style={{ padding: "2rem 1rem" }}>
-              No conversations yet
+          {conversations.length ? (
+            <div className="conversation-list">
+              {conversations.map((conversation) => (
+                <button
+                  key={conversation.partner_id}
+                  type="button"
+                  className={`conversation-item ${activePartner?.partner_id === conversation.partner_id ? "is-active" : ""}`}
+                  onClick={() => setActivePartner(conversation)}
+                  aria-pressed={
+                    activePartner?.partner_id === conversation.partner_id
+                  }
+                >
+                  <span className="conversation-avatar">
+                    {conversation.partner_name?.slice(0, 1)?.toUpperCase()}
+                  </span>
+                  <span className="conversation-copy">
+                    <strong>{conversation.partner_name}</strong>
+                    <span className="conversation-role">
+                      {conversation.partner_role}
+                    </span>
+                    <span className="conversation-preview">
+                      {conversation.last_message || "Start a conversation"}
+                    </span>
+                  </span>
+                  {Number(conversation.unread_count) > 0 && (
+                    <span
+                      className="unread-count"
+                      aria-label={`${conversation.unread_count} unread messages`}
+                    >
+                      {conversation.unread_count}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
           ) : (
-            conversations.map((conv) => (
-              <button
-                key={conv.partner_id}
-                onClick={() => setActivePartner(conv)}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  padding: "1rem",
-                  border: "none",
-                  borderBottom: "1px solid var(--border)",
-                  background:
-                    activePartner?.partner_id === conv.partner_id
-                      ? "var(--bg)"
-                      : "transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>{conv.partner_name}</div>
-                <div
-                  style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}
-                >
-                  {conv.partner_role} · {conv.last_message?.slice(0, 30)}...
-                </div>
-                {conv.unread_count > 0 && (
-                  <span
-                    className="badge badge-confirmed"
-                    style={{ marginTop: "0.25rem" }}
-                  >
-                    {conv.unread_count} new
-                  </span>
-                )}
-              </button>
-            ))
+            !chatError && (
+              <div className="chat-empty-list">
+                <MessageCircle size={22} />
+                <p>No conversations yet</p>
+                <span>
+                  Messages are available when you have an active care
+                  relationship.
+                </span>
+              </div>
+            )
           )}
-        </div>
+        </aside>
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <section
+          className="conversation-panel"
+          aria-label={
+            activePartner
+              ? `Conversation with ${activePartner.partner_name}`
+              : "No conversation selected"
+          }
+        >
           {activePartner ? (
             <>
-              <div
-                style={{
-                  padding: "1rem",
-                  borderBottom: "1px solid var(--border)",
-                  fontWeight: 600,
-                }}
-              >
-                {activePartner.partner_name}
-                <div
-                  style={{
-                    fontSize: "0.8125rem",
-                    color: "var(--text-muted)",
-                    fontWeight: 400,
-                  }}
+              <header className="conversation-header">
+                <button
+                  className="icon-button chat-back-button"
+                  type="button"
+                  onClick={() => setActivePartner(null)}
+                  aria-label="Back to conversations"
                 >
-                  {partnerTyping
-                    ? "Typing..."
-                    : partnerOnline
-                      ? "Online"
-                      : "Offline"}
-                </div>
-              </div>
-              <div
-                ref={messagesContainerRef}
-                style={{ flex: 1, overflowY: "auto", padding: "1rem" }}
-              >
-                {messageLoading ? (
-                  <div className="loading">Loading messages...</div>
-                ) : null}
-                {messageError && (
-                  <div
-                    role="alert"
-                    style={{ color: "var(--danger)", marginBottom: "1rem" }}
+                  <ArrowLeft size={18} />
+                </button>
+                <span className="conversation-avatar conversation-avatar-large">
+                  {activePartner.partner_name?.slice(0, 1)?.toUpperCase()}
+                </span>
+                <div className="conversation-header-copy">
+                  <strong>{activePartner.partner_name}</strong>
+                  <span
+                    className={
+                      partnerOnline ? "presence-online" : "presence-offline"
+                    }
                   >
-                    {messageError}
-                  </div>
-                )}
+                    <i />
+                    {partnerTyping
+                      ? "Typing..."
+                      : partnerOnline
+                        ? "Online"
+                        : "Offline"}
+                  </span>
+                </div>
+                <LockKeyhole
+                  size={16}
+                  className="chat-secure-icon"
+                  aria-label="Secure conversation"
+                />
+              </header>
+              <div
+                className="message-history"
+                ref={messagesContainerRef}
+                aria-live="polite"
+              >
                 {hasOlderMessages && (
                   <button
+                    className="button button-secondary button-small load-older-button"
                     type="button"
                     onClick={loadOlderMessages}
                     disabled={olderLoading}
@@ -316,99 +410,98 @@ export default function Chat() {
                     {olderLoading ? "Loading..." : "Load older messages"}
                   </button>
                 )}
-                {!messageLoading && !messageError && messages.length === 0 && (
-                  <div className="empty-state">No messages yet</div>
+                {messageLoading && (
+                  <div className="message-loading" role="status">
+                    Loading messages...
+                  </div>
                 )}
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    style={{
-                      display: "flex",
-                      justifyContent:
-                        msg.sender_id === user.id ? "flex-end" : "flex-start",
-                      marginBottom: "0.75rem",
-                    }}
-                  >
-                    <div
-                      style={{
-                        maxWidth: "70%",
-                        padding: "0.625rem 1rem",
-                        borderRadius: "var(--radius)",
-                        background:
-                          msg.sender_id === user.id
-                            ? "var(--primary)"
-                            : "var(--bg)",
-                        color:
-                          msg.sender_id === user.id ? "white" : "var(--text)",
-                        fontSize: "0.9375rem",
-                      }}
+                {messageError && (
+                  <div className="alert alert-error" role="alert">
+                    {messageError}{" "}
+                    <button
+                      className="text-button"
+                      onClick={() => setActivePartner({ ...activePartner })}
                     >
-                      {msg.content}
-                      <div
-                        style={{
-                          fontSize: "0.6875rem",
-                          opacity: 0.7,
-                          marginTop: "0.25rem",
-                        }}
-                      >
-                        {new Date(msg.created_at).toLocaleTimeString([], {
+                      Retry
+                    </button>
+                  </div>
+                )}
+                {!messageLoading && !messageError && messages.length === 0 && (
+                  <div className="chat-empty-history">
+                    <MessageCircle size={24} />
+                    <p>No messages yet</p>
+                    <span>Send a message to begin the conversation.</span>
+                  </div>
+                )}
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`message-row ${message.sender_id === user.id ? "is-mine" : ""}`}
+                  >
+                    <div className="message-bubble">
+                      {message.content}
+                      <span className="message-meta">
+                        {new Date(message.created_at).toLocaleTimeString([], {
                           hour: "2-digit",
                           minute: "2-digit",
                         })}
-                        {msg.sender_id !== user.id && msg.is_read && " · Read"}
-                      </div>
+                        {message.sender_id === user.id &&
+                          message.is_read &&
+                          " · Read"}
+                      </span>
                     </div>
                   </div>
                 ))}
+                {partnerTyping && (
+                  <div className="typing-indicator" role="status">
+                    <span />
+                    <span />
+                    <span /> Typing
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
-              <form
-                onSubmit={handleSend}
-                style={{
-                  padding: "1rem",
-                  borderTop: "1px solid var(--border)",
-                  display: "flex",
-                  gap: "0.5rem",
-                }}
-              >
-                <input
+              <form className="message-composer" onSubmit={handleSend}>
+                <label className="sr-only" htmlFor="message">
+                  Write a message
+                </label>
+                <textarea
+                  id="message"
                   value={newMessage}
-                  onChange={(e) => handleTyping(e.target.value)}
-                  placeholder="Type a message..."
+                  onChange={(event) => handleTyping(event.target.value)}
+                  placeholder="Write a message..."
                   maxLength={5000}
-                  style={{
-                    flex: 1,
-                    padding: "0.625rem",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)",
-                  }}
+                  rows={1}
                 />
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={
-                    !newMessage.trim() || newMessage.trim().length > 5000
-                  }
-                >
-                  Send
-                </button>
+                <div className="composer-footer">
+                  <span>{newMessage.length}/5000</span>
+                  <button
+                    className="button button-primary"
+                    type="submit"
+                    disabled={
+                      !newMessage.trim() || newMessage.trim().length > 5000
+                    }
+                  >
+                    <Send size={15} /> Send
+                  </button>
+                </div>
               </form>
             </>
           ) : (
-            <div
-              className="empty-state"
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              Select a conversation to start chatting
+            <div className="chat-select-prompt">
+              <span className="chat-prompt-icon">
+                <MessageCircle size={24} />
+              </span>
+              <h2>Select a conversation</h2>
+              <p>Choose a care-team conversation to view messages.</p>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+        </section>
+      </section>
+      <p className="chat-privacy-note">
+        <LockKeyhole size={14} /> Messages are limited to existing care
+        relationships.
+      </p>
+    </main>
   );
 }

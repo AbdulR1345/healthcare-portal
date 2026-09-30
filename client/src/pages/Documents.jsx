@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
+import { ArrowDownToLine, FileText, Sparkles } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
 import DocumentUpload from "../components/DocumentUpload";
 
 export default function Documents() {
+  const { user } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [summarizing, setSummarizing] = useState(null);
   const [processingErrors, setProcessingErrors] = useState({});
   const [listError, setListError] = useState("");
+  const [downloading, setDownloading] = useState(null);
+  const [downloadErrors, setDownloadErrors] = useState({});
 
   const fetchDocuments = () => {
     api.documents
@@ -52,6 +57,8 @@ export default function Documents() {
   };
 
   const handleDownload = async (doc) => {
+    setDownloading(doc.id);
+    setDownloadErrors((current) => ({ ...current, [doc.id]: "" }));
     try {
       const blob = await api.documents.download(doc.id);
       const objectUrl = URL.createObjectURL(blob);
@@ -61,152 +68,204 @@ export default function Documents() {
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (err) {
-      alert(err.message);
+      setDownloadErrors((current) => ({ ...current, [doc.id]: err.message }));
+    } finally {
+      setDownloading(null);
     }
   };
 
-  if (loading) return <div className="loading">Loading documents...</div>;
+  if (loading)
+    return (
+      <main className="container documents-page">
+        <div className="skeleton dashboard-heading-skeleton" />
+        <div className="skeleton dashboard-panel-skeleton" />
+        <div className="skeleton document-skeleton" />
+      </main>
+    );
 
   return (
-    <div className="container">
-      <h1 style={{ marginBottom: "0.5rem" }}>Medical Documents</h1>
-      <p style={{ color: "var(--text-muted)", marginBottom: "2rem" }}>
-        Upload, manage, and get AI-powered summaries of your medical records
-      </p>
-
-      <div style={{ marginBottom: "2rem" }}>
-        <DocumentUpload onUploaded={fetchDocuments} />
-      </div>
-
-      <h2 style={{ marginBottom: "1rem" }}>Your Documents</h2>
-
-      {listError && (
-        <div className="empty-state" role="alert">
-          Unable to load documents: {listError}
-        </div>
+    <main className="container documents-page">
+      <header className="page-heading">
+        <p className="eyebrow">Health records</p>
+        <h1>
+          {user.role === "admin" ? "Document overview" : "Medical documents"}
+        </h1>
+        <p>
+          {user.role === "admin"
+            ? "Review document processing status across the platform."
+            : "Securely manage medical files and review AI-generated summaries."}
+        </p>
+      </header>
+      {user.role === "patient" && (
+        <section className="document-upload-section">
+          <div>
+            <p className="eyebrow">Add to your records</p>
+            <h2>Upload a document</h2>
+            <p>Supported formats: PDF, JPG, and PNG.</p>
+          </div>
+          <DocumentUpload onUploaded={fetchDocuments} />
+        </section>
       )}
-
-      {documents.length === 0 ? (
-        <div className="empty-state">No documents uploaded yet.</div>
-      ) : (
-        documents.map((doc) => (
-          <div key={doc.id} className="card" style={{ marginBottom: "1rem" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <div>
-                <h4>{doc.file_name}</h4>
-                <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  Uploaded {new Date(doc.uploaded_at).toLocaleDateString()} ·{" "}
-                  {doc.file_type} · {doc.ai_processing_status || "pending"}
-                </p>
-              </div>
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => handleDownload(doc)}
-                >
-                  Download
-                </button>
-                {doc.ai_processing_status !== "completed" && (
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={() => handleSummarize(doc.id)}
-                    disabled={
-                      summarizing === doc.id ||
-                      doc.ai_processing_status === "processing"
-                    }
-                  >
-                    {summarizing === doc.id ||
-                    doc.ai_processing_status === "processing"
-                      ? "Processing..."
-                      : doc.ai_processing_status === "failed"
-                        ? "Retry"
-                        : "Summarize"}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {doc.ai_processing_status === "failed" && (
-              <p
-                role="status"
-                style={{ color: "var(--danger)", marginTop: "0.75rem" }}
-              >
-                Processing failed. Retry when the document is ready.
-              </p>
-            )}
-            {processingErrors[doc.id] && (
-              <p
-                role="alert"
-                style={{ color: "var(--danger)", marginTop: "0.75rem" }}
-              >
-                {processingErrors[doc.id]}
-              </p>
-            )}
-
-            {doc.ai_summary && (
-              <div
-                style={{
-                  marginTop: "1rem",
-                  padding: "1rem",
-                  background: "var(--bg)",
-                  borderRadius: "var(--radius)",
-                }}
-              >
-                <h5 style={{ marginBottom: "0.5rem" }}>AI Summary</h5>
-                <p>
-                  <strong>Type:</strong>{" "}
-                  {doc.ai_summary.documentType || doc.ai_summary.document_type}
-                </p>
-                {(doc.ai_summary.keyInfo || doc.ai_summary.key_info)?.length >
-                  0 && (
-                  <div style={{ marginTop: "0.5rem" }}>
-                    <strong>Key Information:</strong>
-                    <ul style={{ marginLeft: "1.25rem", marginTop: "0.25rem" }}>
-                      {(doc.ai_summary.keyInfo || doc.ai_summary.key_info).map(
-                        (item, i) => (
-                          <li key={i}>{item}</li>
-                        ),
-                      )}
-                    </ul>
-                  </div>
-                )}
-                {(
-                  doc.ai_summary.abnormalValues ||
-                  doc.ai_summary.abnormal_values
-                )?.length > 0 && (
-                  <div style={{ marginTop: "0.5rem", color: "var(--danger)" }}>
-                    <strong>Abnormal Values:</strong>
-                    <ul style={{ marginLeft: "1.25rem" }}>
-                      {(
-                        doc.ai_summary.abnormalValues ||
-                        doc.ai_summary.abnormal_values
-                      ).map((v, i) => (
-                        <li key={i}>{v}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {(doc.ai_summary.followUp || doc.ai_summary.follow_up) && (
-                  <p style={{ marginTop: "0.5rem" }}>
-                    <strong>Follow-up:</strong>{" "}
-                    {doc.ai_summary.followUp || doc.ai_summary.follow_up}
-                  </p>
-                )}
-                <p className="disclaimer">
-                  {doc.ai_summary.disclaimer ||
-                    "For informational purposes only. Not a substitute for professional medical advice."}
-                </p>
-              </div>
+      <section className="document-list-section">
+        <div className="section-title-row">
+          <div>
+            <p className="eyebrow">Private records</p>
+            <h2>
+              {user.role === "admin" ? "Platform documents" : "Documents"}
+            </h2>
+          </div>
+          <span className="badge">{documents.length} total</span>
+        </div>
+        {listError && (
+          <div className="alert alert-error" role="alert">
+            Unable to load documents: {listError}{" "}
+            <button className="text-button" onClick={fetchDocuments}>
+              Try again
+            </button>
+          </div>
+        )}
+        {!listError && documents.length === 0 ? (
+          <div className="empty-state">
+            <FileText size={24} />
+            <p>No documents available.</p>
+            {user.role === "patient" && (
+              <span>Uploaded records will appear here.</span>
             )}
           </div>
-        ))
+        ) : (
+          <div className="document-list">
+            {documents.map((doc) => (
+              <article key={doc.id} className="document-record">
+                <div className="document-record-head">
+                  <span className="document-file-icon">
+                    <FileText size={19} />
+                  </span>
+                  <div className="document-record-title">
+                    <h3>{doc.file_name}</h3>
+                    <p>
+                      {new Date(doc.uploaded_at).toLocaleDateString(undefined, {
+                        dateStyle: "medium",
+                      })}{" "}
+                      · {doc.file_type}
+                    </p>
+                  </div>
+                  <span
+                    className={`badge badge-${doc.ai_processing_status || "pending"}`}
+                  >
+                    {doc.ai_processing_status || "pending"}
+                  </span>
+                </div>
+                <div className="document-record-actions">
+                  <button
+                    className="button button-secondary button-small"
+                    onClick={() => handleDownload(doc)}
+                    disabled={downloading === doc.id}
+                  >
+                    <ArrowDownToLine size={14} />
+                    {downloading === doc.id
+                      ? "Preparing..."
+                      : "Download securely"}
+                  </button>
+                  {doc.ai_processing_status !== "completed" && (
+                    <button
+                      className="button button-primary button-small"
+                      onClick={() => handleSummarize(doc.id)}
+                      disabled={
+                        summarizing === doc.id ||
+                        doc.ai_processing_status === "processing"
+                      }
+                    >
+                      <Sparkles size={14} />
+                      {summarizing === doc.id ||
+                      doc.ai_processing_status === "processing"
+                        ? "Processing..."
+                        : doc.ai_processing_status === "failed"
+                          ? "Retry summary"
+                          : "Generate summary"}
+                    </button>
+                  )}
+                </div>
+                {(processingErrors[doc.id] || downloadErrors[doc.id]) && (
+                  <div
+                    className="alert alert-error document-error"
+                    role="alert"
+                  >
+                    {processingErrors[doc.id] || downloadErrors[doc.id]}
+                  </div>
+                )}
+                {doc.ai_processing_status === "failed" && (
+                  <p className="document-status-note">
+                    Summary processing failed. You can retry when the document
+                    is ready.
+                  </p>
+                )}
+                {doc.ai_summary && (
+                  <section className="summary-panel">
+                    <div className="summary-heading">
+                      <Sparkles size={16} />
+                      <div>
+                        <h4>AI-generated summary</h4>
+                        <span>
+                          {doc.ai_summary.documentType ||
+                            doc.ai_summary.document_type ||
+                            "Document summary"}
+                        </span>
+                      </div>
+                    </div>
+                    {(doc.ai_summary.keyInfo || doc.ai_summary.key_info)
+                      ?.length > 0 && (
+                      <div className="summary-block">
+                        <strong>Key information</strong>
+                        <ul>
+                          {(
+                            doc.ai_summary.keyInfo || doc.ai_summary.key_info
+                          ).map((item, index) => (
+                            <li key={`${doc.id}-key-${index}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(
+                      doc.ai_summary.abnormalValues ||
+                      doc.ai_summary.abnormal_values
+                    )?.length > 0 && (
+                      <div className="summary-block summary-alert">
+                        <strong>Values flagged in the source document</strong>
+                        <ul>
+                          {(
+                            doc.ai_summary.abnormalValues ||
+                            doc.ai_summary.abnormal_values
+                          ).map((item, index) => (
+                            <li key={`${doc.id}-abnormal-${index}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(doc.ai_summary.followUp || doc.ai_summary.follow_up) && (
+                      <div className="summary-block">
+                        <strong>Follow-up noted in summary</strong>
+                        <p>
+                          {doc.ai_summary.followUp || doc.ai_summary.follow_up}
+                        </p>
+                      </div>
+                    )}
+                    <p className="disclaimer">
+                      {doc.ai_summary.disclaimer ||
+                        "For informational purposes only. Not a substitute for professional medical advice."}
+                    </p>
+                  </section>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+      {user.role !== "patient" && (
+        <p className="disclaimer">
+          Access is limited by your role and existing care relationships. Files
+          are retrieved through authenticated, private downloads.
+        </p>
       )}
-    </div>
+    </main>
   );
 }

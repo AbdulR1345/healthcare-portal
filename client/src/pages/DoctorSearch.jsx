@@ -1,37 +1,51 @@
-import { useEffect, useState } from 'react';
-import { api } from '../services/api';
-import DoctorCard from '../components/DoctorCard';
+import { useEffect, useState } from "react";
+import {
+  ArrowRight,
+  BrainCircuit,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
+import { Link } from "react-router-dom";
+import { api } from "../services/api";
+import DoctorCard from "../components/DoctorCard";
 
 export default function DoctorSearch() {
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [aiQuery, setAiQuery] = useState('');
+  const [loadError, setLoadError] = useState("");
+  const [aiQuery, setAiQuery] = useState("");
   const [aiResponse, setAiResponse] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [filters, setFilters] = useState({
-    specialization: '',
-    location: '',
-    maxFee: '',
-    minExperience: '',
-    language: '',
-    search: '',
-    dayOfWeek: '',
+    specialization: "",
+    location: "",
+    maxFee: "",
+    minExperience: "",
+    language: "",
+    search: "",
+    dayOfWeek: "",
   });
 
-  const fetchDoctors = () => {
+  const fetchDoctors = async (nextFilters = filters) => {
     setLoading(true);
+    setLoadError("");
     setAiResponse(null);
     const params = Object.fromEntries(
-      Object.entries(filters).filter(([, v]) => v !== '')
+      Object.entries(nextFilters).filter(([, value]) => value !== ""),
     );
-    api.doctors.search(params)
-      .then(setDoctors)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    try {
+      const result = await api.doctors.search(params);
+      setDoctors(Array.isArray(result) ? result : []);
+    } catch (error) {
+      setLoadError(error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    fetchDoctors();
+    fetchDoctors(filters);
   }, []);
 
   const handleChange = (e) => {
@@ -49,102 +63,243 @@ export default function DoctorSearch() {
 
     setAiLoading(true);
     setAiResponse(null);
+    setLoadError("");
     try {
       const result = await api.doctors.assist(aiQuery.trim());
       setAiResponse(result);
       if (result.suggestions?.length) {
         setDoctors(result.suggestions);
+      } else {
+        setDoctors([]);
       }
     } catch (err) {
-      setAiResponse({ response: err.message, suggestions: [], disclaimer: '' });
+      setLoadError(err.message);
     } finally {
       setAiLoading(false);
     }
   };
 
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const days = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
 
   return (
-    <div className="container">
-      <h1 style={{ marginBottom: '0.5rem' }}>Find a Doctor</h1>
-      <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>
-        Search and filter by specialization, location, fee, availability, and more
-      </p>
-
-      <form onSubmit={handleAiAssist} className="card" style={{ marginBottom: '1.5rem', background: 'linear-gradient(135deg, #f0fdfa 0%, #ecfdf5 100%)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>🤖 AI Appointment Assistant</h3>
-        <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-          Try: "Cardiologists available this Saturday" or "Dermatologist in Los Angeles under $150"
+    <main className="container doctor-search-page">
+      <header className="page-heading">
+        <p className="eyebrow">Clinician directory</p>
+        <h1>Find a doctor</h1>
+        <p>
+          Search by specialty, location, fee, experience, language, or
+          availability.
         </p>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+      </header>
+
+      <form onSubmit={handleAiAssist} className="assist-search">
+        <div className="assist-copy">
+          <span className="assist-icon">
+            <Sparkles size={17} />
+          </span>
+          <div>
+            <h2>Describe the care you're looking for</h2>
+            <p>
+              Search assistance helps match your description to clinician
+              listings. It does not provide medical advice.
+            </p>
+          </div>
+        </div>
+        <div className="assist-controls">
+          <label className="sr-only" htmlFor="aiQuery">
+            Describe what you're looking for
+          </label>
           <input
+            id="aiQuery"
             value={aiQuery}
-            onChange={(e) => setAiQuery(e.target.value)}
-            placeholder="Describe what you're looking for..."
-            style={{ flex: 1, minWidth: '200px', padding: '0.625rem 0.875rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
+            onChange={(event) => setAiQuery(event.target.value)}
+            placeholder="For example, a cardiologist in Boston"
+            maxLength={500}
           />
-          <button type="submit" className="btn btn-primary" disabled={aiLoading}>
-            {aiLoading ? 'Searching...' : 'Ask AI'}
+          <button
+            className="button button-primary"
+            type="submit"
+            disabled={aiLoading || !aiQuery.trim()}
+          >
+            {aiLoading ? (
+              "Searching..."
+            ) : (
+              <>
+                <BrainCircuit size={16} /> Find matches
+              </>
+            )}
           </button>
         </div>
         {aiResponse && (
-          <div style={{ marginTop: '1rem' }}>
-            <p style={{ fontWeight: 500 }}>{aiResponse.response}</p>
-            {aiResponse.disclaimer && <p className="disclaimer">{aiResponse.disclaimer}</p>}
-          </div>
+          <p className="assist-response" role="status">
+            {aiResponse.response}
+          </p>
         )}
       </form>
 
-      <form onSubmit={handleSearch} className="card" style={{ marginBottom: '2rem' }}>
-        <div className="grid grid-3">
+      <form onSubmit={handleSearch} className="search-filters">
+        <div className="filter-title">
+          <h2>
+            <SlidersHorizontal size={17} /> Refine your search
+          </h2>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => {
+              const reset = {
+                specialization: "",
+                location: "",
+                maxFee: "",
+                minExperience: "",
+                language: "",
+                search: "",
+                dayOfWeek: "",
+              };
+              setFilters(reset);
+              fetchDoctors(reset);
+            }}
+          >
+            Clear filters
+          </button>
+        </div>
+        <div className="filter-grid">
           <div className="form-group">
-            <label htmlFor="search">Search</label>
-            <input id="search" name="search" value={filters.search} onChange={handleChange} placeholder="Name or specialty" />
+            <label htmlFor="search">Name or specialty</label>
+            <input
+              id="search"
+              name="search"
+              value={filters.search}
+              onChange={handleChange}
+              placeholder="Search clinicians"
+            />
           </div>
           <div className="form-group">
-            <label htmlFor="specialization">Specialization</label>
-            <input id="specialization" name="specialization" value={filters.specialization} onChange={handleChange} placeholder="e.g. Cardiology" />
+            <label htmlFor="specialization">Specialty</label>
+            <input
+              id="specialization"
+              name="specialization"
+              value={filters.specialization}
+              onChange={handleChange}
+              placeholder="e.g. Cardiology"
+            />
           </div>
           <div className="form-group">
             <label htmlFor="location">Location</label>
-            <input id="location" name="location" value={filters.location} onChange={handleChange} placeholder="e.g. New York" />
+            <input
+              id="location"
+              name="location"
+              value={filters.location}
+              onChange={handleChange}
+              placeholder="City or region"
+            />
           </div>
           <div className="form-group">
-            <label htmlFor="maxFee">Max Fee ($)</label>
-            <input id="maxFee" name="maxFee" type="number" value={filters.maxFee} onChange={handleChange} />
+            <label htmlFor="maxFee">Maximum fee</label>
+            <input
+              id="maxFee"
+              name="maxFee"
+              type="number"
+              min="0"
+              value={filters.maxFee}
+              onChange={handleChange}
+              placeholder="Any fee"
+            />
           </div>
           <div className="form-group">
-            <label htmlFor="minExperience">Min Experience (years)</label>
-            <input id="minExperience" name="minExperience" type="number" value={filters.minExperience} onChange={handleChange} />
+            <label htmlFor="minExperience">Minimum experience</label>
+            <input
+              id="minExperience"
+              name="minExperience"
+              type="number"
+              min="0"
+              value={filters.minExperience}
+              onChange={handleChange}
+              placeholder="Any experience"
+            />
           </div>
           <div className="form-group">
             <label htmlFor="language">Language</label>
-            <input id="language" name="language" value={filters.language} onChange={handleChange} placeholder="e.g. English" />
+            <input
+              id="language"
+              name="language"
+              value={filters.language}
+              onChange={handleChange}
+              placeholder="Language"
+            />
           </div>
           <div className="form-group">
-            <label htmlFor="dayOfWeek">Available Day</label>
-            <select id="dayOfWeek" name="dayOfWeek" value={filters.dayOfWeek} onChange={handleChange}>
+            <label htmlFor="dayOfWeek">Available day</label>
+            <select
+              id="dayOfWeek"
+              name="dayOfWeek"
+              value={filters.dayOfWeek}
+              onChange={handleChange}
+            >
               <option value="">Any day</option>
-              {days.map((day, i) => (
-                <option key={day} value={i}>{day}</option>
+              {days.map((day, index) => (
+                <option key={day} value={index}>
+                  {day}
+                </option>
               ))}
             </select>
           </div>
         </div>
-        <button type="submit" className="btn btn-primary">Search Doctors</button>
+        <button type="submit" className="button button-primary">
+          <Search size={15} /> Search directory
+        </button>
       </form>
 
-      {loading ? (
-        <div className="loading">Searching...</div>
-      ) : doctors.length === 0 ? (
-        <div className="empty-state">No doctors found matching your criteria.</div>
-      ) : (
-        <div className="grid grid-2">
-          {doctors.map((doctor) => (
-            <DoctorCard key={doctor.id} doctor={doctor} />
-          ))}
+      <section className="doctor-results" aria-live="polite">
+        <div className="results-heading">
+          <div>
+            <p className="eyebrow">Directory</p>
+            <h2>
+              {loading
+                ? "Searching clinicians"
+                : `${doctors.length} ${doctors.length === 1 ? "clinician" : "clinicians"} found`}
+            </h2>
+          </div>
+          <Link className="text-link" to="/appointments">
+            View appointments <ArrowRight size={14} />
+          </Link>
         </div>
-      )}
-    </div>
+        {loadError && (
+          <div className="alert alert-error" role="alert">
+            {loadError}{" "}
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => fetchDoctors()}
+            >
+              Try again
+            </button>
+          </div>
+        )}
+        {loading ? (
+          <div className="doctor-results-grid" aria-label="Loading clinicians">
+            <div className="skeleton doctor-skeleton" />
+            <div className="skeleton doctor-skeleton" />
+          </div>
+        ) : doctors.length === 0 && !loadError ? (
+          <div className="empty-state">
+            No clinicians match those filters. Try broadening your search.
+          </div>
+        ) : (
+          <div className="doctor-results-grid">
+            {doctors.map((doctor) => (
+              <DoctorCard key={doctor.id} doctor={doctor} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }

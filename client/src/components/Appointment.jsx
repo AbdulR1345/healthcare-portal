@@ -1,51 +1,84 @@
-export default function AppointmentCard({ appointment, onStatusChange, showPatient }) {
+import { CalendarDays, Clock3, MapPin } from "lucide-react";
+import { Link } from "react-router-dom";
+
+export default function AppointmentCard({
+  appointment,
+  onStatusChange,
+  showPatient,
+}) {
   const formatDate = (date) =>
-    new Date(date).toLocaleDateString('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
+    new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
     });
 
+  const actions = showPatient
+    ? appointment.status === "scheduled"
+      ? [
+          ["confirmed", "Confirm"],
+          ["cancelled", "Cancel"],
+        ]
+      : appointment.status === "confirmed"
+        ? [
+            ["completed", "Complete"],
+            ["cancelled", "Cancel"],
+          ]
+        : []
+    : ["scheduled", "confirmed"].includes(appointment.status)
+      ? [["cancelled", "Cancel"]]
+      : [];
+
   return (
-    <div className="card" style={{ marginBottom: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <article className="appointment-card">
+      <div className="appointment-topline">
         <div>
-          <h4 style={{ marginBottom: '0.25rem' }}>
-            {showPatient ? appointment.patient_name : appointment.doctor_name}
-          </h4>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            {appointment.specialization}
+          <p className="appointment-overline">
+            {showPatient ? "Patient" : "Appointment"}
           </p>
+          <h3>
+            {showPatient ? appointment.patient_name : appointment.doctor_name}
+          </h3>
+          {appointment.specialization && (
+            <p className="appointment-specialty">
+              {appointment.specialization}
+            </p>
+          )}
         </div>
-        <span className={`badge badge-${appointment.status}`}>{appointment.status}</span>
+        <span className={`badge badge-${appointment.status}`}>
+          {appointment.status}
+        </span>
       </div>
-
-      <div style={{ margin: '1rem 0', fontSize: '0.9375rem' }}>
-        <p>📅 {formatDate(appointment.appointment_date)}</p>
-        <p>🕐 {appointment.start_time?.slice(0, 5)} – {appointment.end_time?.slice(0, 5)}</p>
-        {appointment.location && <p>📍 {appointment.location}</p>}
+      <div className="appointment-facts">
+        <span>
+          <CalendarDays size={15} /> {formatDate(appointment.appointment_date)}
+        </span>
+        <span>
+          <Clock3 size={15} /> {appointment.start_time?.slice(0, 5)}–
+          {appointment.end_time?.slice(0, 5)}
+        </span>
+        {appointment.location && (
+          <span>
+            <MapPin size={15} /> {appointment.location}
+          </span>
+        )}
       </div>
-
-      {onStatusChange && (
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {appointment.status === 'scheduled' && (
-            <button className="btn btn-primary btn-sm" onClick={() => onStatusChange(appointment.id, 'confirmed')}>
-              Confirm
+      <footer className="appointment-actions">
+        <Link to={`/appointments/${appointment.id}`} className="text-link">
+          View details
+        </Link>
+        {onStatusChange &&
+          actions.map(([status, label]) => (
+            <button
+              key={status}
+              className={`button button-small ${status === "cancelled" ? "button-danger" : "button-secondary"}`}
+              onClick={() => onStatusChange(appointment.id, status)}
+            >
+              {label}
             </button>
-          )}
-          {['scheduled', 'confirmed'].includes(appointment.status) && (
-            <>
-              <button className="btn btn-primary btn-sm" onClick={() => onStatusChange(appointment.id, 'completed')}>
-                Complete
-              </button>
-              <button className="btn btn-danger btn-sm" onClick={() => onStatusChange(appointment.id, 'cancelled')}>
-                Cancel
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+          ))}
+      </footer>
+    </article>
   );
 }

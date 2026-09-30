@@ -1,33 +1,34 @@
-import { useState } from 'react';
-import { api } from '../services/api';
+import { useState } from "react";
+import { FileUp } from "lucide-react";
+import { api } from "../services/api";
 
 export default function DocumentUpload({ onUploaded }) {
   const [file, setFile] = useState(null);
-  const [appointmentId, setAppointmentId] = useState('');
+  const [appointmentId, setAppointmentId] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!file) {
-      setError('Please select a file');
+      setError("Please select a file");
       return;
     }
 
     setLoading(true);
-    setError('');
-    setSuccess('');
+    setError("");
+    setSuccess("");
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
-      if (appointmentId) formData.append('appointmentId', appointmentId);
+      formData.append("file", file);
+      if (appointmentId) formData.append("appointmentId", appointmentId);
 
       await api.documents.upload(formData);
-      setSuccess('Document uploaded successfully');
+      setSuccess("Document uploaded successfully");
       setFile(null);
-      setAppointmentId('');
+      setAppointmentId("");
       e.target.reset();
       onUploaded?.();
     } catch (err) {
@@ -38,14 +39,12 @@ export default function DocumentUpload({ onUploaded }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="card">
-      <h3 style={{ marginBottom: '1rem' }}>Upload Medical Document</h3>
-
+    <form onSubmit={handleSubmit} className="upload-form">
       {error && <div className="alert alert-error">{error}</div>}
       {success && <div className="alert alert-success">{success}</div>}
 
       <div className="form-group">
-        <label htmlFor="file">Select File (PDF, JPG, PNG)</label>
+        <label htmlFor="file">Select a file (PDF, JPG, or PNG)</label>
         <input
           type="file"
           id="file"
@@ -66,7 +65,8 @@ export default function DocumentUpload({ onUploaded }) {
       </div>
 
       <button type="submit" className="btn btn-primary" disabled={loading}>
-        {loading ? 'Uploading...' : 'Upload Document'}
+        <FileUp size={15} />
+        {loading ? "Uploading..." : "Upload document"}
       </button>
     </form>
   );

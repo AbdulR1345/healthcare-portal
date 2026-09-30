@@ -8,6 +8,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const handleExpiredSession = () => setUser(null);
+    window.addEventListener("auth:expired", handleExpiredSession);
+
     const token = localStorage.getItem("token");
     if (token) {
       api.auth
@@ -18,6 +21,9 @@ export function AuthProvider({ children }) {
     } else {
       setLoading(false);
     }
+
+    return () =>
+      window.removeEventListener("auth:expired", handleExpiredSession);
   }, []);
 
   const login = async (email, password) => {
@@ -28,10 +34,7 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (formData) => {
-    const { user: userData, token } = await api.auth.register(formData);
-    localStorage.setItem("token", token);
-    setUser(userData);
-    return userData;
+    return api.auth.register(formData);
   };
 
   const logout = async () => {
