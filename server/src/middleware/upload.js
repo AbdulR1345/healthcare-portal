@@ -1,35 +1,30 @@
 import multer from "multer";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadsDir = path.resolve(
-  process.env.MEDICAL_UPLOADS_DIR ||
-    path.join(__dirname, "../../private-uploads"),
-);
 
 const ALLOWED_TYPES = [".pdf", ".jpg", ".jpeg", ".png"];
+const MIME_BY_EXTENSION = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+};
 const MAX_SIZE = 10 * 1024 * 1024;
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
-});
 
 const fileFilter = (_req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
-  if (!ALLOWED_TYPES.includes(ext)) {
-    return cb(new Error("Only PDF, JPG, JPEG, and PNG files are allowed"));
+  if (
+    !ALLOWED_TYPES.includes(ext) ||
+    MIME_BY_EXTENSION[ext] !== file.mimetype
+  ) {
+    const error = new Error("Only PDF, JPG, JPEG, and PNG files are allowed");
+    error.status = 415;
+    return cb(error);
   }
   cb(null, true);
 };
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: { fileSize: MAX_SIZE },
 });

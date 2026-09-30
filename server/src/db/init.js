@@ -202,7 +202,7 @@ async function init() {
         }
       }
 
-      console.log("Seed data inserted. Demo credentials: password123");
+      console.log("Seed data inserted.");
     }
   } finally {
     client.release();
@@ -211,6 +211,6 @@ async function init() {
 }
 
 init().catch((err) => {
-  console.error("Database init failed:", err);
+  console.error("Database init failed:", err.code || "unknown");
   process.exit(1);
 });

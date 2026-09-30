@@ -156,6 +156,58 @@ async function startAiStub() {
   };
 }
 
+async function startObjectStore() {
+  const objects = new Map();
+  let getCount = 0;
+  const server = http.createServer((request, response) => {
+    const objectKey = new URL(request.url, "http://localhost").pathname;
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      if (request.method === "PUT") {
+        objects.set(objectKey, Buffer.concat(chunks));
+        response.writeHead(200, { ETag: '"test-etag"' });
+        response.end();
+        return;
+      }
+
+      if (request.method === "GET") {
+        getCount += 1;
+        const object = objects.get(objectKey);
+        if (!object) {
+          response.writeHead(404, { "Content-Type": "application/xml" });
+          response.end("<Error><Code>NoSuchKey</Code></Error>");
+          return;
+        }
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": object.length,
+          "x-amz-request-id": "integration-test",
+        });
+        response.end(object);
+        return;
+      }
+
+      response.writeHead(405);
+      response.end();
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return {
+    endpoint: `http://127.0.0.1:${server.address().port}`,
+    get getCount() {
+      return getCount;
+    },
+    close: () =>
+      new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
+}
+
 async function waitForApi(child, baseUrl) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (child.exitCode !== null) {
@@ -173,7 +225,7 @@ async function waitForApi(child, baseUrl) {
   throw new Error("API process did not become ready in time.");
 }
 
-export async function startHarness() {
+export async function startHarness({ nodeEnv = "test" } = {}) {
   if (
     !process.env.TEST_DATABASE_URL ||
     process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL
@@ -189,21 +241,32 @@ export async function startHarness() {
   ]);
   const smtp = await startSmtpSink();
   const ai = await startAiStub();
+  const objectStore = await startObjectStore();
   const testToken = "integration-test-only-ai-token";
   const child = spawn(process.execPath, ["src/index.js"], {
     cwd: serverDir,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      NODE_ENV: "test",
+      NODE_ENV: nodeEnv,
       PORT: String(port),
       DATABASE_URL: process.env.TEST_DATABASE_URL,
-      JWT_SECRET: "integration-test-only-jwt-secret-with-enough-entropy-7821",
+      JWT_SECRET:
+        nodeEnv === "production"
+          ? "G7!qN4#vR9@xK2$mP8^dL5&cW1*zT6bH3uF0yA"
+          : "integration-test-only-jwt-secret-with-enough-entropy-7821",
       AI_SERVICE_TOKEN: testToken,
       AI_SERVICE_URL: ai.url,
       AI_PROCESSING_TIMEOUT_MS: "250",
       OPENAI_API_KEY: "",
       MEDICAL_UPLOADS_DIR: uploadDir,
+      MEDICAL_STORAGE_PROVIDER: nodeEnv === "production" ? "s3" : "local",
+      S3_BUCKET: "healthcare-private-test-bucket",
+      S3_REGION: "us-east-1",
+      S3_ACCESS_KEY_ID: "integration-test-access-key",
+      S3_SECRET_ACCESS_KEY: "integration-test-secret-key",
+      S3_ENDPOINT: objectStore.endpoint,
+      S3_FORCE_PATH_STYLE: "true",
       CLIENT_URL: "http://localhost:5173",
       SMTP_HOST: "127.0.0.1",
       SMTP_PORT: String(smtp.port),
@@ -226,13 +289,15 @@ export async function startHarness() {
   } catch (error) {
     await smtp.close();
     await ai.close();
+    await objectStore.close();
     await fs.rm(uploadDir, { recursive: true, force: true });
-    throw error;
+    throw new Error(`${error.message} ${logs}`);
   }
 
   return {
     baseUrl,
     ai,
+    objectStore,
     aiToken: testToken,
     uploadDir,
     get logs() {
@@ -252,7 +317,7 @@ export async function startHarness() {
           });
         });
       }
-      await Promise.all([smtp.close(), ai.close()]);
+      await Promise.all([smtp.close(), ai.close(), objectStore.close()]);
       await fs.rm(uploadDir, { recursive: true, force: true });
     },
   };

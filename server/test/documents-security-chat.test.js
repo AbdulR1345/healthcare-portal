@@ -22,8 +22,8 @@ after(async () => {
   await closeTestPool();
 });
 
-async function signIn(user) {
-  const { response, data } = await request(harness.baseUrl, "/api/auth/login", {
+async function signIn(user, baseUrl = harness.baseUrl) {
+  const { response, data } = await request(baseUrl, "/api/auth/login", {
     method: "POST",
     body: { email: user.email, password: user.password },
   });
@@ -34,7 +34,8 @@ async function signIn(user) {
 async function uploadFixture(
   patient,
   token,
-  content = "test fixture document bytes",
+  content = "%PDF-1.4\nfixture document bytes",
+  baseUrl = harness.baseUrl,
 ) {
   const form = new FormData();
   form.set(
@@ -42,7 +43,7 @@ async function uploadFixture(
     new Blob([content], { type: "application/pdf" }),
     "fixture.pdf",
   );
-  return request(harness.baseUrl, "/api/documents/upload", {
+  return request(baseUrl, "/api/documents/upload", {
     token,
     method: "POST",
     body: form,
@@ -125,7 +126,39 @@ test("patients can download their own documents", async (t) => {
     },
   );
   assert.equal(result.status, 200);
-  assert.equal(await result.text(), "test fixture document bytes");
+  assert.equal(await result.text(), "%PDF-1.4\nfixture document bytes");
+});
+
+test("production private object storage preserves authenticated document access", async (t) => {
+  const productionHarness = await startHarness({ nodeEnv: "production" });
+  t.after(() => productionHarness.close());
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const patientToken = await signIn(patient, productionHarness.baseUrl);
+  const upload = await uploadFixture(
+    patient,
+    patientToken,
+    "%PDF-1.4\nprivate object fixture",
+    productionHarness.baseUrl,
+  );
+  assert.equal(upload.response.status, 201);
+
+  const download = await fetch(
+    `${productionHarness.baseUrl}/api/documents/${upload.data.id}/download`,
+    { headers: { Authorization: `Bearer ${patientToken}` } },
+  );
+  assert.equal(download.status, 200);
+  assert.equal(await download.text(), "%PDF-1.4\nprivate object fixture");
+  assert.equal(productionHarness.objectStore.getCount, 1);
+
+  const unrelatedDoctor = await fixture.createDoctor({ dayOfWeek: 1 });
+  const denied = await request(
+    productionHarness.baseUrl,
+    `/api/documents/${upload.data.id}/download`,
+    { token: await signIn(unrelatedDoctor, productionHarness.baseUrl) },
+  );
+  assert.equal(denied.response.status, 403);
+  assert.equal(productionHarness.objectStore.getCount, 1);
 });
 
 test("a doctor with an active care relationship can access the patient's document", async (t) => {
@@ -143,7 +176,38 @@ test("a doctor with an active care relationship can access the patient's documen
     },
   );
   assert.equal(result.status, 200);
-  assert.equal(await result.text(), "test fixture document bytes");
+  assert.equal(await result.text(), "%PDF-1.4\nfixture document bytes");
+});
+
+test("document uploads reject mismatched types and invalid file signatures", async (t) => {
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const token = await signIn(patient);
+  const mismatched = new FormData();
+  mismatched.set(
+    "file",
+    new Blob(["not a pdf"], { type: "image/png" }),
+    "report.pdf",
+  );
+  const invalidSignature = new FormData();
+  invalidSignature.set(
+    "file",
+    new Blob(["not a pdf"], { type: "application/pdf" }),
+    "report.pdf",
+  );
+
+  const typeResult = await request(harness.baseUrl, "/api/documents/upload", {
+    token,
+    method: "POST",
+    body: mismatched,
+  });
+  const signatureResult = await request(
+    harness.baseUrl,
+    "/api/documents/upload",
+    { token, method: "POST", body: invalidSignature },
+  );
+  assert.equal(typeResult.response.status, 415);
+  assert.equal(signatureResult.response.status, 415);
 });
 
 test("an unrelated doctor receives forbidden for a patient's document", async (t) => {
@@ -845,12 +909,7 @@ test("missing and unsupported document files cannot start processing", async (t)
   assert.equal(missing.response.status, 404);
 
   const empty = await uploadFixture(patient, token, "");
-  const emptyResult = await request(
-    harness.baseUrl,
-    `/api/documents/${empty.data.id}/summarize`,
-    { method: "POST", token },
-  );
-  assert.equal(emptyResult.response.status, 422);
+  assert.equal(empty.response.status, 422);
 
   const second = await uploadFixture(patient, token, "%PDF-1.4\nfixture");
   await getTestPool().query(

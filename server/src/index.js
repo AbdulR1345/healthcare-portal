@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
@@ -11,7 +10,11 @@ import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 
 import pool from "./db/pool.js";
-import { sendReminderEmail } from "./services/emailService.js";
+import {
+  assertProductionEmailConfiguration,
+  sendReminderEmail,
+} from "./services/emailService.js";
+import { assertProductionStorageConfiguration } from "./services/documentStorage.js";
 import authRoutes from "./routes/auth.js";
 import doctorRoutes from "./routes/doctors.js";
 import appointmentRoutes from "./routes/appointments.js";
@@ -29,6 +32,8 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, "../.env") });
 
 const isProduction = process.env.NODE_ENV === "production";
+assertProductionEmailConfiguration();
+assertProductionStorageConfiguration();
 const jwtSecret = process.env.JWT_SECRET || "";
 const isPlaceholderSecret =
   /your[-_ ]|change[-_ ]in[-_ ]production|changeme|placeholder|default|example|test/i.test(
@@ -41,11 +46,6 @@ if (isProduction && (isWeakSecret || isPlaceholderSecret)) {
     "JWT_SECRET must be configured with a strong production value.",
   );
 }
-
-const uploadsDir = path.resolve(
-  process.env.MEDICAL_UPLOADS_DIR || path.join(__dirname, "../private-uploads"),
-);
-fs.mkdirSync(uploadsDir, { recursive: true });
 
 const app = express();
 const server = http.createServer(app);
@@ -89,6 +89,16 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.use((err, _req, res, _next) => {
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res
+      .status(413)
+      .json({ error: "Uploaded file exceeds the 10 MB limit" });
+  }
+
+  if (err.status === 415) {
+    return res.status(415).json({ error: "Unsupported document file type" });
+  }
+
   if (err.type === "entity.too.large") {
     return res.status(413).json({ error: "Request body too large" });
   }
@@ -315,8 +325,6 @@ cron.schedule("0 * * * *", async () => {
     );
 
     for (const reminder of rows) {
-      console.log(`Reminder for ${reminder.email}: ${reminder.message}`);
-
       await sendReminderEmail(
         reminder.email,
         "Appointment Reminder — Healthcare Portal",
@@ -333,7 +341,7 @@ cron.schedule("0 * * * *", async () => {
       });
     }
   } catch (err) {
-    console.error("Reminder cron error:", err);
+    console.error("Reminder cron error:", err.code || "unknown");
   }
 });
 

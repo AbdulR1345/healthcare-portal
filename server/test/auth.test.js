@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { after, before, test } from "node:test";
 import { createFixture, closeTestPool, getTestPool } from "./support/db.js";
 import { startHarness, request, refreshCookie } from "./support/harness.js";
+import { assertProductionEmailConfiguration } from "../src/services/emailService.js";
 
 let harness;
 before(async () => {
@@ -11,6 +12,32 @@ before(async () => {
 after(async () => {
   await harness?.close();
   await closeTestPool();
+});
+
+test("production email configuration fails closed without SMTP", () => {
+  const previous = {
+    nodeEnv: process.env.NODE_ENV,
+    host: process.env.SMTP_HOST,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  };
+  process.env.NODE_ENV = "production";
+  delete process.env.SMTP_HOST;
+  delete process.env.SMTP_USER;
+  delete process.env.SMTP_PASS;
+
+  assert.throws(assertProductionEmailConfiguration, /SMTP configuration/);
+
+  if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previous.nodeEnv;
+  for (const [name, value] of [
+    ["SMTP_HOST", previous.host],
+    ["SMTP_USER", previous.user],
+    ["SMTP_PASS", previous.pass],
+  ]) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
 
 async function registerAccount(body) {
@@ -134,6 +161,45 @@ test("email verification activates the registered account", async (t) => {
   assert.equal(verified.rows[0].email_verified, true);
   const login = await loginAccount(email, "Unique-Verification!7284");
   assert.ok(login.accessToken.length > 0);
+});
+
+test("production responses and logs never expose verification or reset tokens", async (t) => {
+  const productionHarness = await startHarness({ nodeEnv: "production" });
+  t.after(() => productionHarness.close());
+  const fixture = await createFixture(t);
+  const email = `production-${crypto.randomUUID()}@example.com`;
+  const registration = await request(
+    productionHarness.baseUrl,
+    "/api/auth/register",
+    {
+      method: "POST",
+      body: {
+        email,
+        password: "Unique-Production!7284",
+        role: "patient",
+        fullName: "Production Fixture",
+      },
+    },
+  );
+  assert.equal(registration.response.status, 201);
+  fixture.trackUser(registration.data.user.id);
+  assert.equal("verificationUrl" in registration.data, false);
+
+  const forgot = await request(
+    productionHarness.baseUrl,
+    "/api/auth/forgot-password",
+    { method: "POST", body: { email } },
+  );
+  assert.equal(forgot.response.status, 200);
+  assert.equal("resetUrl" in forgot.data, false);
+  assert.equal(
+    forgot.data.message,
+    "If that email address is registered, a password reset link has been sent.",
+  );
+  assert.doesNotMatch(
+    productionHarness.logs,
+    /Verification URL|Password Reset URL|[?&]token=[a-f0-9]{64}/i,
+  );
 });
 
 test("refresh token rotation invalidates the prior refresh session", async (t) => {

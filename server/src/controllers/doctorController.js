@@ -114,7 +114,7 @@ export async function searchDoctors(req, res) {
 
     res.json(rows);
   } catch (err) {
-    console.error("Search doctors error:", err);
+    console.error("Search doctors error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to search doctors" });
   }
 }
@@ -150,7 +150,7 @@ export async function getDoctorById(req, res) {
       availability,
     });
   } catch (err) {
-    console.error("Get doctor error:", err);
+    console.error("Get doctor error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to fetch doctor" });
   }
 }
@@ -328,7 +328,7 @@ export async function getAvailableSlots(req, res) {
       slots,
     });
   } catch (err) {
-    console.error("Get slots error:", err);
+    console.error("Get slots error:", err.code || "unknown");
     res.status(500).json({
       error: "Failed to fetch available slots",
     });
@@ -440,7 +440,7 @@ export async function aiAssistSearch(req, res) {
 
     res.json(result);
   } catch (err) {
-    console.error("AI assist error:", err);
+    console.error("AI assist error:", err.code || "unknown");
     res.status(500).json({
       error: "AI assistant unavailable",
     });

@@ -20,9 +20,7 @@ async function ensureMigrationsTable(client) {
 async function getMigrationFiles() {
   const files = await fs.readdir(migrationsDir);
 
-  return files
-    .filter((file) => file.endsWith(".sql"))
-    .sort();
+  return files.filter((file) => file.endsWith(".sql")).sort();
 }
 
 async function migrate() {
@@ -75,7 +73,7 @@ async function migrate() {
 
     console.log("Database migrations completed successfully.");
   } catch (error) {
-    console.error("Database migration failed:", error);
+    console.error("Database migration failed:", error.code || "unknown");
     process.exitCode = 1;
   } finally {
     client.release();

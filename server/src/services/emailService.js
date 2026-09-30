@@ -11,9 +11,21 @@ import nodemailer from "nodemailer";
 let transporter = null;
 
 export function isConfigured() {
+  const port = Number(process.env.SMTP_PORT || 587);
   return Boolean(
-    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
+    process.env.SMTP_HOST?.trim() &&
+    process.env.SMTP_USER?.trim() &&
+    process.env.SMTP_PASS &&
+    Number.isInteger(port) &&
+    port > 0 &&
+    port <= 65535,
   );
+}
+
+export function assertProductionEmailConfiguration() {
+  if (process.env.NODE_ENV === "production" && !isConfigured()) {
+    throw new Error("Production SMTP configuration is required.");
+  }
 }
 
 function getTransporter() {
@@ -111,8 +123,12 @@ Healthcare Portal`;
   `;
 
   if (!transport) {
-    console.log(`[Email skipped - SMTP not configured] To: ${to} | ${subject}`);
-    console.log(`[Verification URL] ${verificationUrl}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[Email skipped - SMTP not configured] ${subject}`);
+      console.log(`[Verification URL] ${verificationUrl}`);
+    } else {
+      console.error("Verification email unavailable: smtp_not_configured");
+    }
 
     return {
       sent: false,
@@ -129,17 +145,17 @@ Healthcare Portal`;
       html,
     });
 
-    console.log(`Verification email sent to ${to}`);
+    console.log("Verification email sent");
 
     return {
       sent: true,
     };
   } catch (err) {
-    console.error(`Failed to send verification email to ${to}:`, err.message);
+    console.error("Verification email failed: smtp_send_failed");
 
     return {
       sent: false,
-      reason: err.message,
+      reason: "smtp_send_failed",
     };
   }
 }
@@ -209,8 +225,12 @@ Healthcare Portal`;
   `;
 
   if (!transport) {
-    console.log(`[Email skipped - SMTP not configured] To: ${to} | ${subject}`);
-    console.log(`[Password Reset URL] ${resetUrl}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[Email skipped - SMTP not configured] ${subject}`);
+      console.log(`[Password Reset URL] ${resetUrl}`);
+    } else {
+      console.error("Password reset email unavailable: smtp_not_configured");
+    }
 
     return {
       sent: false,
@@ -227,17 +247,17 @@ Healthcare Portal`;
       html,
     });
 
-    console.log(`Password reset email sent to ${to}`);
+    console.log("Password reset email sent");
 
     return {
       sent: true,
     };
   } catch (err) {
-    console.error(`Failed to send password reset email to ${to}:`, err.message);
+    console.error("Password reset email failed: smtp_send_failed");
 
     return {
       sent: false,
-      reason: err.message,
+      reason: "smtp_send_failed",
     };
   }
 }
@@ -280,7 +300,9 @@ Healthcare Portal`;
   `;
 
   if (!transport) {
-    console.log(`[Email skipped - SMTP not configured] To: ${to} | ${subject}`);
+    console.log(
+      "Password reset confirmation email skipped: smtp_not_configured",
+    );
 
     return {
       sent: false,
@@ -297,20 +319,17 @@ Healthcare Portal`;
       html,
     });
 
-    console.log(`Password reset confirmation sent to ${to}`);
+    console.log("Password reset confirmation email sent");
 
     return {
       sent: true,
     };
   } catch (err) {
-    console.error(
-      `Failed to send password reset confirmation to ${to}:`,
-      err.message,
-    );
+    console.error("Password reset confirmation email failed: smtp_send_failed");
 
     return {
       sent: false,
-      reason: err.message,
+      reason: "smtp_send_failed",
     };
   }
 }
@@ -319,9 +338,7 @@ export async function sendReminderEmail(to, subject, message) {
   const transport = getTransporter();
 
   if (!transport) {
-    console.log(
-      `[Email skipped - SMTP not configured] To: ${to} | ${subject}: ${message}`,
-    );
+    console.log("Reminder email skipped: smtp_not_configured");
 
     return {
       sent: false,
@@ -347,17 +364,17 @@ export async function sendReminderEmail(to, subject, message) {
       `,
     });
 
-    console.log(`Reminder email sent to ${to}`);
+    console.log("Reminder email sent");
 
     return {
       sent: true,
     };
   } catch (err) {
-    console.error(`Failed to send email to ${to}:`, err.message);
+    console.error("Reminder email failed: smtp_send_failed");
 
     return {
       sent: false,
-      reason: err.message,
+      reason: "smtp_send_failed",
     };
   }
 }
@@ -368,4 +385,5 @@ export default {
   sendPasswordResetConfirmationEmail,
   sendReminderEmail,
   isConfigured,
+  assertProductionEmailConfiguration,
 };

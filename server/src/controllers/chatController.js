@@ -47,7 +47,7 @@ export async function getConversations(req, res) {
     );
     res.json(rows);
   } catch (err) {
-    console.error("Get conversations error:", err);
+    console.error("Get conversations error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to fetch conversations" });
   }
 }
@@ -105,7 +105,7 @@ export async function getMessages(req, res) {
 
     res.json(rows.reverse());
   } catch (err) {
-    console.error("Get messages error:", err);
+    console.error("Get messages error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to fetch messages" });
   }
 }
@@ -141,7 +141,7 @@ export async function sendMessage(req, res) {
     );
     res.status(201).json(rows[0]);
   } catch (err) {
-    console.error("Send message error:", err);
+    console.error("Send message error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to send message" });
   }
 }

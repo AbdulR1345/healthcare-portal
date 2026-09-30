@@ -1,55 +1,29 @@
-import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import pool from "../db/pool.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadsDir = path.resolve(
-  process.env.MEDICAL_UPLOADS_DIR ||
-    path.join(__dirname, "../../private-uploads"),
-);
-const legacyUploadsDir = path.resolve(__dirname, "../../uploads");
+import {
+  deleteDocument,
+  getDocumentMimeType,
+  getDocumentStorageKey,
+  readDocument,
+  storeDocument,
+} from "../services/documentStorage.js";
 const documentIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const storedFilenamePattern = /^\d+-\d+\.(pdf|jpg|jpeg|png)$/i;
 const MAX_PROCESSING_BYTES = 10 * 1024 * 1024;
 const configuredAiTimeout =
   Number(process.env.AI_PROCESSING_TIMEOUT_MS) || 15000;
 const AI_TIMEOUT_MS = Math.max(100, Math.min(configuredAiTimeout, 60000));
-const MIME_BY_EXTENSION = {
-  pdf: "application/pdf",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-};
-
-function getStoredFilename(doc) {
-  if (typeof doc.file_url !== "string") return null;
-
-  const filename = path.basename(doc.file_url);
-  return storedFilenamePattern.test(filename) ? filename : null;
-}
-
-function findStoredFile(doc) {
-  const filename = getStoredFilename(doc);
-  if (!filename) return null;
-
-  for (const directory of [uploadsDir, legacyUploadsDir]) {
-    const filePath = path.resolve(directory, filename);
-    if (
-      filePath.startsWith(`${directory}${path.sep}`) &&
-      fs.existsSync(filePath)
-    ) {
-      return filePath;
-    }
-  }
-
-  return null;
-}
-
 function withDownloadUrl(doc) {
   return { ...doc, file_url: `/api/documents/${doc.id}/download` };
+}
+
+function getSafeDownloadName(fileName) {
+  return (
+    path.posix
+      .basename(String(fileName || "document").replaceAll("\\", "/"))
+      .replace(/[\u0000-\u001f\u007f]/g, "_") || "document"
+  );
 }
 
 function isSupportedSummary(summary) {
@@ -114,7 +88,6 @@ async function getDocumentForUser(id, user) {
 
 export async function uploadDocument(req, res) {
   if (req.user.role !== "patient") {
-    if (req.file) fs.unlinkSync(req.file.path);
     return res
       .status(403)
       .json({ error: "Only patients can upload documents" });
@@ -126,9 +99,20 @@ export async function uploadDocument(req, res) {
 
   const { appointmentId } = req.body;
   const patientId = req.user.id;
-  const fileUrl = `/uploads/${req.file.filename}`;
+  const extension = path.extname(req.file.originalname).toLowerCase();
+  if (req.file.buffer.length === 0) {
+    return res.status(422).json({ error: "Document file is empty or invalid" });
+  }
+  if (!hasSupportedFileSignature(req.file.buffer, extension.slice(1))) {
+    return res.status(415).json({ error: "Unsupported document file type" });
+  }
+  const storageKey = `${randomUUID()}${extension}`;
+  const fileUrl = `/uploads/${storageKey}`;
+  let stored = false;
 
   try {
+    await storeDocument(storageKey, req.file.buffer, req.file.mimetype);
+    stored = true;
     const { rows } = await pool.query(
       `INSERT INTO documents (patient_id, appointment_id, file_name, file_url, file_type)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
@@ -143,8 +127,8 @@ export async function uploadDocument(req, res) {
 
     res.status(201).json(withDownloadUrl(rows[0]));
   } catch (err) {
-    fs.unlinkSync(req.file.path);
-    console.error("Upload document error:", err);
+    if (stored) await deleteDocument(storageKey).catch(() => {});
+    console.error("Upload document error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to upload document" });
   }
 }
@@ -180,7 +164,7 @@ export async function getMyDocuments(req, res) {
     const { rows } = await pool.query(query, params);
     res.json(rows.map(withDownloadUrl));
   } catch (err) {
-    console.error("Get documents error:", err);
+    console.error("Get documents error:", err.code || "unknown");
     res.status(500).json({ error: "Failed to fetch documents" });
   }
 }
@@ -194,23 +178,20 @@ export async function downloadDocument(req, res) {
       });
     }
 
-    const filePath = findStoredFile(result.doc);
-    if (!filePath)
+    const storageKey = getDocumentStorageKey(result.doc.file_url);
+    if (!storageKey)
+      return res.status(404).json({ error: "Document file not found" });
+
+    const fileBuffer = await readDocument(storageKey);
+    if (!fileBuffer)
       return res.status(404).json({ error: "Document file not found" });
 
     res.set("Cache-Control", "private, no-store");
     res.set("X-Content-Type-Options", "nosniff");
-    return res.download(
-      filePath,
-      path.basename(result.doc.file_name),
-      (err) => {
-        if (err && !res.headersSent) {
-          res.status(404).json({ error: "Document file not found" });
-        }
-        if (err)
-          console.error("Download document error:", err.code || "unknown");
-      },
-    );
+    const mimeType = getDocumentMimeType(storageKey);
+    res.attachment(getSafeDownloadName(result.doc.file_name));
+    res.type(mimeType);
+    return res.send(fileBuffer);
   } catch (err) {
     console.error("Download document error:", err.code || "unknown");
     return res.status(500).json({ error: "Failed to download document" });
@@ -237,32 +218,39 @@ export async function summarizeDocument(req, res) {
       });
     }
 
-    const filePath = findStoredFile(doc);
-    if (!filePath) {
+    const storageKey = getDocumentStorageKey(doc.file_url);
+    if (!storageKey) {
       return res.status(404).json({ error: "Document file not found" });
     }
 
-    const extension = path.extname(filePath).slice(1).toLowerCase();
-    const expectedMime = MIME_BY_EXTENSION[extension];
+    const extension = path.extname(storageKey).slice(1).toLowerCase();
+    const expectedMime = getDocumentMimeType(storageKey);
     if (!expectedMime || doc.file_type !== expectedMime) {
       return res.status(415).json({ error: "Unsupported document file type" });
     }
 
     let fileBuffer;
     try {
-      const fileStat = await fs.promises.stat(filePath);
-      if (!fileStat.isFile() || fileStat.size === 0) {
+      fileBuffer = await readDocument(storageKey);
+      if (!fileBuffer) {
+        return res.status(404).json({ error: "Document file not found" });
+      }
+      if (fileBuffer.length === 0) {
         return res
           .status(422)
           .json({ error: "Document file is empty or invalid" });
       }
-      if (fileStat.size > MAX_PROCESSING_BYTES) {
+      if (fileBuffer.length > MAX_PROCESSING_BYTES) {
         return res
           .status(413)
           .json({ error: "Document exceeds processing limits" });
       }
-      fileBuffer = await fs.promises.readFile(filePath);
-    } catch {
+    } catch (error) {
+      if (error.code === "DOCUMENT_TOO_LARGE") {
+        return res
+          .status(413)
+          .json({ error: "Document exceeds processing limits" });
+      }
       return res.status(404).json({ error: "Document file not found" });
     }
 

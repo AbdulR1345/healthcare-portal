@@ -1,17 +1,22 @@
-import pool from '../db/pool.js';
+import pool from "../db/pool.js";
 
 export async function getDashboardStats(req, res) {
   try {
-    const [patients, doctors, appointments, completed, specializations] = await Promise.all([
-      pool.query(`SELECT COUNT(*)::int AS count FROM users WHERE role = 'patient'`),
-      pool.query(`SELECT COUNT(*)::int AS count FROM doctors`),
-      pool.query(`SELECT COUNT(*)::int AS count FROM appointments`),
-      pool.query(`SELECT COUNT(*)::int AS count FROM appointments WHERE status = 'completed'`),
-      pool.query(`
+    const [patients, doctors, appointments, completed, specializations] =
+      await Promise.all([
+        pool.query(
+          `SELECT COUNT(*)::int AS count FROM users WHERE role = 'patient'`,
+        ),
+        pool.query(`SELECT COUNT(*)::int AS count FROM doctors`),
+        pool.query(`SELECT COUNT(*)::int AS count FROM appointments`),
+        pool.query(
+          `SELECT COUNT(*)::int AS count FROM appointments WHERE status = 'completed'`,
+        ),
+        pool.query(`
         SELECT specialization, COUNT(*)::int AS count
         FROM doctors GROUP BY specialization ORDER BY count DESC LIMIT 5
       `),
-    ]);
+      ]);
 
     const totalAppointments = appointments.rows[0].count;
     const completedAppointments = completed.rows[0].count;
@@ -28,8 +33,8 @@ export async function getDashboardStats(req, res) {
       popularSpecializations: specializations.rows,
     });
   } catch (err) {
-    console.error('Admin stats error:', err);
-    res.status(500).json({ error: 'Failed to fetch admin stats' });
+    console.error("Admin stats error:", err.code || "unknown");
+    res.status(500).json({ error: "Failed to fetch admin stats" });
   }
 }
 
@@ -41,12 +46,12 @@ export async function getReminders(req, res) {
        JOIN appointments a ON a.id = r.appointment_id
        WHERE r.user_id = $1
        ORDER BY r.scheduled_for DESC`,
-      [req.user.id]
+      [req.user.id],
     );
     res.json(rows);
   } catch (err) {
-    console.error('Get reminders error:', err);
-    res.status(500).json({ error: 'Failed to fetch reminders' });
+    console.error("Get reminders error:", err.code || "unknown");
+    res.status(500).json({ error: "Failed to fetch reminders" });
   }
 }
 

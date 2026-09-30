@@ -503,7 +503,7 @@ export async function getProfile(req, res) {
 
     return res.json(profile);
   } catch (err) {
-    console.error("Profile error:", err);
+    console.error("Profile error:", err.code || "unknown");
 
     return res.status(500).json({
       error: "Failed to fetch profile",

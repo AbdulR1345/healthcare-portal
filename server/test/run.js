@@ -83,10 +83,8 @@ const setupEnv = {
   DATABASE_URL: testDatabaseUrl,
 };
 
-for (const script of ["src/db/init.js", "src/db/migrate.js"]) {
-  const status = run(process.execPath, [script], setupEnv);
-  if (status !== 0) process.exit(status);
-}
+const migrationStatus = run(process.execPath, ["src/db/migrate.js"], setupEnv);
+if (migrationStatus !== 0) process.exit(migrationStatus);
 
 const testEnv = {
   ...process.env,

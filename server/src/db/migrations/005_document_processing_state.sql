@@ -10,6 +10,16 @@ SET ai_processing_status = 'completed',
 WHERE ai_summary IS NOT NULL
   AND ai_processing_status = 'pending';
 
-ALTER TABLE documents
-  ADD CONSTRAINT documents_ai_processing_status_check
-  CHECK (ai_processing_status IN ('pending', 'processing', 'completed', 'failed'));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'documents_ai_processing_status_check'
+      AND conrelid = 'documents'::regclass
+  ) THEN
+    ALTER TABLE documents
+      ADD CONSTRAINT documents_ai_processing_status_check
+      CHECK (ai_processing_status IN ('pending', 'processing', 'completed', 'failed'));
+  END IF;
+END $$;
