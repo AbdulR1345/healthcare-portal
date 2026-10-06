@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import { after, before, test } from "node:test";
+import { ipKeyGenerator } from "express-rate-limit";
 import { createFixture, closeTestPool, getTestPool } from "./support/db.js";
 import { startHarness, request, refreshCookie } from "./support/harness.js";
 import { assertProductionEmailConfiguration } from "../src/services/emailService.js";
@@ -15,26 +16,23 @@ after(async () => {
   await closeTestPool();
 });
 
-test("production email configuration fails closed without SMTP", () => {
+test("production email configuration fails closed without Resend", () => {
   const previous = {
     nodeEnv: process.env.NODE_ENV,
-    host: process.env.SMTP_HOST,
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    apiKey: process.env.RESEND_API_KEY,
+    from: process.env.EMAIL_FROM,
   };
   process.env.NODE_ENV = "production";
-  delete process.env.SMTP_HOST;
-  delete process.env.SMTP_USER;
-  delete process.env.SMTP_PASS;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.EMAIL_FROM;
 
-  assert.throws(assertProductionEmailConfiguration, /SMTP configuration/);
+  assert.throws(assertProductionEmailConfiguration, /Resend configuration/);
 
   if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = previous.nodeEnv;
   for (const [name, value] of [
-    ["SMTP_HOST", previous.host],
-    ["SMTP_USER", previous.user],
-    ["SMTP_PASS", previous.pass],
+    ["RESEND_API_KEY", previous.apiKey],
+    ["EMAIL_FROM", previous.from],
   ]) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -152,6 +150,32 @@ test("sensitive authentication routes return a clean 429 when limited", async ()
     assert.ok(second.response.headers.has("retry-after"));
   } finally {
     await limitedHarness.close();
+  }
+});
+
+test("one registration request increments its PostgreSQL limiter once", async () => {
+  const limiterHarness = await startHarness();
+  try {
+    const result = await request(limiterHarness.baseUrl, "/api/auth/register", {
+      method: "POST",
+      body: {},
+    });
+    assert.equal(result.response.status, 400);
+    assert.doesNotMatch(limiterHarness.logs, /ERR_ERL_DOUBLE_COUNT/);
+
+    const limiterKey = crypto
+      .createHash("sha256")
+      .update(
+        `${limiterHarness.rateLimitNamespace}:REGISTRATION_RATE_LIMIT_MAX:${ipKeyGenerator("127.0.0.1")}`,
+      )
+      .digest("hex");
+    const { rows } = await getTestPool().query(
+      "SELECT hit_count FROM api_rate_limits WHERE limiter_key = $1",
+      [limiterKey],
+    );
+    assert.equal(Number(rows[0]?.hit_count), 1);
+  } finally {
+    await limiterHarness.close();
   }
 });
 
@@ -352,6 +376,167 @@ test("email verification activates the registered account", async (t) => {
   const login = await loginAccount(email, "Unique-Verification!7284");
   assert.ok(login.accessToken.length > 0);
 });
+
+test(
+  "development email verification uses the existing token flow safely",
+  async (t) => {
+    const developmentHarness = await startHarness({ nodeEnv: "development" });
+    t.after(() => developmentHarness.close());
+
+    const fixture = await createFixture(t);
+    const unverifiedUser = await fixture.createUser("patient", {
+      email: `dev-verify-${crypto.randomUUID()}@example.com`,
+      emailVerified: false,
+    });
+    const rejectedCredentials = await request(
+      developmentHarness.baseUrl,
+      "/api/auth/dev/verify-email",
+      {
+        method: "POST",
+        body: {
+          email: unverifiedUser.email,
+          id: unverifiedUser.id,
+          token: "client-supplied-verification-token",
+        },
+      },
+    );
+    assert.equal(rejectedCredentials.response.status, 400);
+    assert.doesNotMatch(
+      JSON.stringify(rejectedCredentials.data),
+      /client-supplied-verification-token/,
+    );
+    const unchangedUser = await getTestPool().query(
+      "SELECT email_verified FROM users WHERE id = $1",
+      [unverifiedUser.id],
+    );
+    assert.equal(unchangedUser.rows[0].email_verified, false);
+
+    const verified = await request(
+      developmentHarness.baseUrl,
+      "/api/auth/dev/verify-email",
+      {
+        method: "POST",
+        body: { email: unverifiedUser.email.toUpperCase() },
+      },
+    );
+    assert.equal(verified.response.status, 200);
+    assert.deepEqual(verified.data, {
+      message: "Email verified successfully.",
+    });
+
+    const verifiedRow = await getTestPool().query(
+      `SELECT
+        email_verified,
+        email_verification_token_hash,
+        email_verification_expires_at
+       FROM users
+       WHERE id = $1`,
+      [unverifiedUser.id],
+    );
+    assert.equal(verifiedRow.rows[0].email_verified, true);
+    assert.equal(verifiedRow.rows[0].email_verification_token_hash, null);
+    assert.equal(verifiedRow.rows[0].email_verification_expires_at, null);
+
+    const alreadyVerifiedUser = await fixture.createUser("patient", {
+      email: `dev-verified-${crypto.randomUUID()}@example.com`,
+    });
+    const alreadyVerified = await request(
+      developmentHarness.baseUrl,
+      "/api/auth/dev/verify-email",
+      {
+        method: "POST",
+        body: { email: alreadyVerifiedUser.email },
+      },
+    );
+    assert.equal(alreadyVerified.response.status, 200);
+    assert.deepEqual(alreadyVerified.data, {
+      message: "Email is already verified.",
+    });
+
+    const unknown = await request(
+      developmentHarness.baseUrl,
+      "/api/auth/dev/verify-email",
+      {
+        method: "POST",
+        body: { email: `unknown-${crypto.randomUUID()}@example.com` },
+      },
+    );
+    assert.equal(unknown.response.status, 404);
+    assert.deepEqual(unknown.data, { error: "User not found" });
+
+    for (const response of [verified.data, alreadyVerified.data, unknown.data]) {
+      assert.doesNotMatch(
+        JSON.stringify(response),
+        /token|password|cookie|session/i,
+      );
+    }
+  },
+);
+
+test(
+  "email verification helper rejects non-development environments without modifying users",
+  async (t) => {
+    const fixture = await createFixture(t);
+    const user = await fixture.createUser("patient", {
+      email: `guard-verify-${crypto.randomUUID()}@example.com`,
+      emailVerified: false,
+    });
+    const before = await getTestPool().query(
+      `SELECT
+        email_verified,
+        email_verification_token_hash,
+        email_verification_expires_at,
+        password_hash
+       FROM users
+       WHERE id = $1`,
+      [user.id],
+    );
+    const query = {
+      method: "POST",
+      body: { email: user.email },
+    };
+
+    const testEnvironment = await request(
+      harness.baseUrl,
+      "/api/auth/dev/verify-email",
+      query,
+    );
+    assert.equal(testEnvironment.response.status, 404);
+    assert.deepEqual(testEnvironment.data, { error: "Not found" });
+
+    const productionHarness = await startHarness({ nodeEnv: "production" });
+    t.after(() => productionHarness.close());
+    const production = await request(
+      productionHarness.baseUrl,
+      "/api/auth/dev/verify-email",
+      query,
+    );
+    assert.equal(production.response.status, 404);
+    assert.deepEqual(production.data, { error: "Not found" });
+
+    const unchanged = await getTestPool().query(
+      `SELECT
+        email_verified,
+        email_verification_token_hash,
+        email_verification_expires_at,
+        password_hash
+       FROM users
+       WHERE id = $1`,
+      [user.id],
+    );
+    assert.equal(unchanged.rows[0].email_verified, false);
+    assert.equal(unchanged.rows[0].email_verification_token_hash, null);
+    assert.equal(unchanged.rows[0].email_verification_expires_at, null);
+    assert.equal(
+      unchanged.rows[0].password_hash,
+      before.rows[0].password_hash,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(production.data),
+      /token|password|cookie|session/i,
+    );
+  },
+);
 
 test("production responses and logs never expose verification or reset tokens", async (t) => {
   const productionHarness = await startHarness({ nodeEnv: "production" });

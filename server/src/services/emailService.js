@@ -1,51 +1,73 @@
 /**
  * Centralized email service.
  *
- * Uses SMTP when configured.
- * Falls back to console logging during local development
- * when SMTP credentials are not configured.
+ * Uses Resend's HTTPS API when configured.
+ * Skips delivery during local development when Resend is not configured.
  */
 
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
+import "../config/env.js";
 
-let transporter = null;
+let resendClient = null;
+let resendClientKey = null;
 
 export function isConfigured() {
-  const port = Number(process.env.SMTP_PORT || 587);
   return Boolean(
-    process.env.SMTP_HOST?.trim() &&
-    process.env.SMTP_USER?.trim() &&
-    process.env.SMTP_PASS &&
-    Number.isInteger(port) &&
-    port > 0 &&
-    port <= 65535,
+    process.env.RESEND_API_KEY?.trim() && process.env.EMAIL_FROM?.trim(),
   );
 }
 
 export function assertProductionEmailConfiguration() {
   if (process.env.NODE_ENV === "production" && !isConfigured()) {
-    throw new Error("Production SMTP configuration is required.");
+    throw new Error(
+      "Production Resend configuration requires RESEND_API_KEY and EMAIL_FROM.",
+    );
   }
 }
 
-function getTransporter() {
-  if (transporter) return transporter;
+function getResendClient() {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) return null;
 
-  if (!isConfigured()) {
-    return null;
+  if (!resendClient || resendClientKey !== apiKey) {
+    resendClient = new Resend(apiKey);
+    resendClient.logError = () => {};
+    resendClientKey = apiKey;
   }
 
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
+  return resendClient;
+}
 
-  return transporter;
+async function deliverEmail({ type, to, subject, text, html }) {
+  if (!isConfigured()) {
+    const reason = "resend_not_configured";
+    if (process.env.NODE_ENV === "production") {
+      console.error(`${type} email unavailable: ${reason}`);
+    } else {
+      console.log("[Email skipped - Resend not configured]");
+    }
+    return { sent: false, reason };
+  }
+
+  try {
+    const { error } = await getResendClient().emails.send({
+      from: process.env.EMAIL_FROM.trim(),
+      to,
+      subject,
+      text,
+      html,
+    });
+    if (error) {
+      console.error(`${type} email failed: resend_send_failed`);
+      return { sent: false, reason: "resend_send_failed" };
+    }
+
+    console.log(`${type} email sent`);
+    return { sent: true };
+  } catch {
+    console.error(`${type} email failed: resend_send_failed`);
+    return { sent: false, reason: "resend_send_failed" };
+  }
 }
 
 function escapeHtml(value) {
@@ -58,8 +80,6 @@ function escapeHtml(value) {
 }
 
 export async function sendVerificationEmail({ to, fullName, verificationUrl }) {
-  const transport = getTransporter();
-
   const safeName = escapeHtml(fullName || "there");
   const safeVerificationUrl = escapeHtml(verificationUrl);
 
@@ -122,47 +142,10 @@ Healthcare Portal`;
     </div>
   `;
 
-  if (!transport) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[Email skipped - SMTP not configured] ${subject}`);
-      console.log(`[Verification URL] ${verificationUrl}`);
-    } else {
-      console.error("Verification email unavailable: smtp_not_configured");
-    }
-
-    return {
-      sent: false,
-      reason: "smtp_not_configured",
-    };
-  }
-
-  try {
-    await transport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      text,
-      html,
-    });
-
-    console.log("Verification email sent");
-
-    return {
-      sent: true,
-    };
-  } catch (err) {
-    console.error("Verification email failed: smtp_send_failed");
-
-    return {
-      sent: false,
-      reason: "smtp_send_failed",
-    };
-  }
+  return deliverEmail({ type: "Verification", to, subject, text, html });
 }
 
 export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
-  const transport = getTransporter();
-
   const safeName = escapeHtml(fullName || "there");
   const safeResetUrl = escapeHtml(resetUrl);
 
@@ -224,47 +207,10 @@ Healthcare Portal`;
     </div>
   `;
 
-  if (!transport) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[Email skipped - SMTP not configured] ${subject}`);
-      console.log(`[Password Reset URL] ${resetUrl}`);
-    } else {
-      console.error("Password reset email unavailable: smtp_not_configured");
-    }
-
-    return {
-      sent: false,
-      reason: "smtp_not_configured",
-    };
-  }
-
-  try {
-    await transport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      text,
-      html,
-    });
-
-    console.log("Password reset email sent");
-
-    return {
-      sent: true,
-    };
-  } catch (err) {
-    console.error("Password reset email failed: smtp_send_failed");
-
-    return {
-      sent: false,
-      reason: "smtp_send_failed",
-    };
-  }
+  return deliverEmail({ type: "Password reset", to, subject, text, html });
 }
 
 export async function sendPasswordResetConfirmationEmail({ to, fullName }) {
-  const transport = getTransporter();
-
   const safeName = escapeHtml(fullName || "there");
 
   const subject = "Your Healthcare Portal password was reset";
@@ -299,60 +245,22 @@ Healthcare Portal`;
     </div>
   `;
 
-  if (!transport) {
-    console.log(
-      "Password reset confirmation email skipped: smtp_not_configured",
-    );
-
-    return {
-      sent: false,
-      reason: "smtp_not_configured",
-    };
-  }
-
-  try {
-    await transport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      text,
-      html,
-    });
-
-    console.log("Password reset confirmation email sent");
-
-    return {
-      sent: true,
-    };
-  } catch (err) {
-    console.error("Password reset confirmation email failed: smtp_send_failed");
-
-    return {
-      sent: false,
-      reason: "smtp_send_failed",
-    };
-  }
+  return deliverEmail({
+    type: "Password reset confirmation",
+    to,
+    subject,
+    text,
+    html,
+  });
 }
 
 export async function sendReminderEmail(to, subject, message) {
-  const transport = getTransporter();
-
-  if (!transport) {
-    console.log("Reminder email skipped: smtp_not_configured");
-
-    return {
-      sent: false,
-      reason: "smtp_not_configured",
-    };
-  }
-
-  try {
-    await transport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      text: message,
-      html: `
+  return deliverEmail({
+    type: "Reminder",
+    to,
+    subject,
+    text: message,
+    html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
           <h2 style="color: #0d9488;">Healthcare Portal Reminder</h2>
           <p>${escapeHtml(message)}</p>
@@ -362,21 +270,7 @@ export async function sendReminderEmail(to, subject, message) {
           </p>
         </div>
       `,
-    });
-
-    console.log("Reminder email sent");
-
-    return {
-      sent: true,
-    };
-  } catch (err) {
-    console.error("Reminder email failed: smtp_send_failed");
-
-    return {
-      sent: false,
-      reason: "smtp_send_failed",
-    };
-  }
+  });
 }
 
 export default {

@@ -1,13 +1,12 @@
 import { spawnSync } from "node:child_process";
-import dotenv from "dotenv";
+import "../src/config/env.js";
 import pg from "pg";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
-const serverDir = path.resolve(path.dirname(__filename), "..");
-dotenv.config({ path: path.join(serverDir, ".env") });
+const serverDir = path.dirname(path.dirname(__filename));
 
 function fail(message) {
   console.error(message);

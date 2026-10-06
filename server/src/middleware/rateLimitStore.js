@@ -4,6 +4,7 @@ import pool from "../db/pool.js";
 export default class PostgresRateLimitStore {
   constructor(name) {
     this.name = name;
+    this.localKeys = true;
     this.windowMs = 0;
     this.namespace = process.env.RATE_LIMIT_NAMESPACE || "";
   }

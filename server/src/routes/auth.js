@@ -1,9 +1,11 @@
 import { Router } from "express";
-import { body } from "express-validator";
+import { body, checkExact } from "express-validator";
 import {
   register,
   login,
+  demoLogin,
   verifyEmail,
+  devVerifyEmail,
   resendVerificationEmail,
   getProfile,
   refreshAccessToken,
@@ -39,6 +41,16 @@ function isDoctor(_value, { req }) {
 
 const emailValidator = createEmailValidator();
 const passwordValidator = createPasswordValidator();
+
+function requireDevelopmentEnvironment(_req, res, next) {
+  if (process.env.NODE_ENV !== "development") {
+    return res.status(404).json({
+      error: "Not found",
+    });
+  }
+
+  return next();
+}
 
 router.post(
   "/register",
@@ -167,6 +179,32 @@ router.post(
       }),
   ],
   login,
+);
+
+router.post(
+  "/demo-login",
+  loginLimiter,
+  [
+    body("role")
+      .isString()
+      .withMessage("Role must be a string")
+      .bail()
+      .trim()
+      .toLowerCase()
+      .isIn(["patient", "doctor"])
+      .withMessage(
+        "Demo access is only available for the patient and doctor roles",
+      ),
+  ],
+  demoLogin,
+);
+
+router.post(
+  "/dev/verify-email",
+  requireDevelopmentEnvironment,
+  emailVerificationLimiter,
+  [checkExact([createEmailValidator()], { locations: ["body"] })],
+  devVerifyEmail,
 );
 
 router.get("/verify-email", emailVerificationLimiter, verifyEmail);

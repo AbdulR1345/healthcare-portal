@@ -19,6 +19,10 @@ function sanitizedValidationErrors(result) {
   }));
 }
 
+function isDemoModeEnabled() {
+  return (process.env.DEMO_MODE_ENABLED ?? "false").trim().toLowerCase() === "true";
+}
+
 function signAccessToken(user) {
   return jwt.sign(
     {
@@ -26,6 +30,7 @@ function signAccessToken(user) {
       email: user.email,
       role: user.role,
       fullName: user.full_name,
+      is_demo: Boolean(user.is_demo),
     },
     process.env.JWT_SECRET,
     {
@@ -87,6 +92,59 @@ async function createAndSendVerificationEmail({ userId, email, fullName }) {
     emailResult,
     verificationUrl,
   };
+}
+
+async function verifyEmailToken(token, queryable = pool) {
+  const tokenHash = hashToken(token);
+  const { rows } = await queryable.query(
+    `SELECT
+      id,
+      email,
+      role,
+      full_name,
+      phone,
+      email_verified
+     FROM users
+     WHERE email_verification_token_hash = $1
+       AND email_verification_expires_at > NOW()
+     LIMIT 1`,
+    [tokenHash],
+  );
+
+  if (!rows.length) {
+    return { status: "invalid" };
+  }
+
+  const user = rows[0];
+
+  if (user.email_verified) {
+    return { status: "already-verified" };
+  }
+
+  const { rows: updatedRows } = await queryable.query(
+    `UPDATE users
+     SET
+       email_verified = TRUE,
+       email_verification_token_hash = NULL,
+       email_verification_expires_at = NULL,
+       email_verification_sent_at = NULL
+     WHERE id = $1
+       AND email_verified = FALSE
+     RETURNING
+       id,
+       email,
+       role,
+       full_name,
+       phone,
+       email_verified`,
+    [user.id],
+  );
+
+  if (!updatedRows.length) {
+    return { status: "already-verified" };
+  }
+
+  return { status: "verified", user: updatedRows[0] };
 }
 
 export async function register(req, res) {
@@ -235,6 +293,94 @@ export async function register(req, res) {
   }
 }
 
+export async function demoLogin(req, res) {
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      errors: sanitizedValidationErrors(errors),
+    });
+  }
+
+  if (!isDemoModeEnabled()) {
+    return res.status(403).json({
+      error: "Demo access is disabled on this deployment.",
+    });
+  }
+
+  const { role } = req.body;
+  const allowedRole = typeof role === "string" ? role.trim().toLowerCase() : "";
+
+  if (!['patient', 'doctor'].includes(allowedRole)) {
+    return res.status(400).json({
+      error: "Demo access is only available for the patient and doctor roles.",
+    });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+        id,
+        email,
+        password_hash,
+        role,
+        full_name,
+        phone,
+        email_verified,
+        is_demo
+       FROM users
+       WHERE role = $1
+         AND is_demo = TRUE
+       ORDER BY email ASC
+       LIMIT 1`,
+      [allowedRole],
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        error: "Demo account is unavailable.",
+      });
+    }
+
+    const user = rows[0];
+
+    delete user.password_hash;
+
+    const accessToken = signAccessToken(user);
+
+    const { refreshToken, session } = await createSession({
+      userId: user.id,
+      userAgent: req.get("user-agent"),
+      ipAddress: req.ip,
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/api/auth",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({
+      user,
+      token: accessToken,
+      expiresIn: "15m",
+      session: {
+        id: session.id,
+        expiresAt: session.expires_at,
+      },
+      demo: true,
+    });
+  } catch (err) {
+    console.error("Demo login error:", err.code || "unknown");
+
+    return res.status(500).json({
+      error: "Demo login failed",
+    });
+  }
+}
+
 export async function login(req, res) {
   const errors = validationResult(req);
 
@@ -256,7 +402,8 @@ export async function login(req, res) {
         role,
         full_name,
         phone,
-        email_verified
+        email_verified,
+        is_demo
        FROM users
        WHERE email = $1`,
       [normalizedEmail],
@@ -331,72 +478,118 @@ export async function verifyEmail(req, res) {
   }
 
   try {
-    const tokenHash = hashToken(token);
+    const result = await verifyEmailToken(token);
 
-    const { rows } = await pool.query(
-      `SELECT
-        id,
-        email,
-        role,
-        full_name,
-        phone,
-        email_verified,
-        email_verification_expires_at
-       FROM users
-       WHERE email_verification_token_hash = $1
-         AND email_verification_expires_at > NOW()
-       LIMIT 1`,
-      [tokenHash],
-    );
+    if (result.status === "already-verified") {
+      return res.status(400).json({
+        error: "Email is already verified",
+      });
+    }
 
-    if (!rows.length) {
+    if (result.status === "invalid") {
       return res.status(400).json({
         error: "Invalid or expired verification link",
       });
     }
 
-    const user = rows[0];
-
-    if (user.email_verified) {
-      return res.status(400).json({
-        error: "Email is already verified",
-      });
-    }
-
-    const { rows: updatedRows } = await pool.query(
-      `UPDATE users
-       SET
-         email_verified = TRUE,
-         email_verification_token_hash = NULL,
-         email_verification_expires_at = NULL,
-         email_verification_sent_at = NULL
-       WHERE id = $1
-         AND email_verified = FALSE
-       RETURNING
-         id,
-         email,
-         role,
-         full_name,
-         phone,
-         email_verified`,
-      [user.id],
-    );
-
-    if (!updatedRows.length) {
-      return res.status(400).json({
-        error: "Email is already verified",
-      });
-    }
-
     return res.json({
       message: "Email verified successfully. You can now log in.",
-      user: updatedRows[0],
+      user: result.user,
     });
   } catch (err) {
     console.error("Email verification error:", err.code || "unknown");
 
     return res.status(500).json({
       error: "Email verification failed",
+    });
+  }
+}
+
+export async function devVerifyEmail(req, res) {
+  if (process.env.NODE_ENV !== "development") {
+    return res.status(404).json({
+      error: "Not found",
+    });
+  }
+
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      errors: sanitizedValidationErrors(errors),
+    });
+  }
+
+  const normalizedEmail = req.body.email.trim().toLowerCase();
+  try {
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `SELECT id, email_verified
+         FROM users
+         WHERE email = $1
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedEmail],
+      );
+
+      if (!rows.length) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error: "User not found",
+        });
+      }
+
+      if (rows[0].email_verified) {
+        await client.query("COMMIT");
+        return res.json({
+          message: "Email is already verified.",
+        });
+      }
+
+      const verificationToken = generateVerificationToken();
+      await client.query(
+        `UPDATE users
+         SET
+           email_verification_token_hash = $1,
+           email_verification_expires_at = $2
+         WHERE id = $3
+           AND email_verified = FALSE`,
+        [
+          hashToken(verificationToken),
+          getVerificationExpiry(),
+          rows[0].id,
+        ],
+      );
+
+      const result = await verifyEmailToken(verificationToken, client);
+
+      if (result.status !== "verified") {
+        throw new Error("Development email verification did not complete.");
+      }
+
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return res.json({
+      message: "Email verified successfully.",
+    });
+  } catch (err) {
+    console.error(
+      "Development email verification error:",
+      err.code || "unknown",
+    );
+
+    return res.status(500).json({
+      error: "Unable to verify email",
     });
   }
 }
@@ -614,6 +807,7 @@ export default {
   register,
   login,
   verifyEmail,
+  devVerifyEmail,
   resendVerificationEmail,
   getProfile,
   refreshAccessToken,

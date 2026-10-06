@@ -86,6 +86,11 @@ export const api = {
       request("/auth/register", { method: "POST", body: JSON.stringify(body) }),
     login: (body) =>
       request("/auth/login", { method: "POST", body: JSON.stringify(body) }),
+    demoLogin: (body) =>
+      request("/auth/demo-login", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     logout: () => request("/auth/logout", { method: "POST" }),
     profile: () => request("/auth/profile"),
     verifyEmail: (token) =>

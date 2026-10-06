@@ -7,6 +7,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:init": "cd server && npm run db:init",
+    "demo:seed": "cd server && npm run demo:seed",
     "setup": "npm install && npm run db:up && cd server && npm install && npm run db:init && cd ../client && npm install",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",

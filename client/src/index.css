@@ -777,7 +777,11 @@ textarea.input {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 11px;
+  column-gap: 11px;
+  row-gap: 12px;
+}
+.hero-demo-actions {
+  margin-top: 18px;
 }
 .hero-actions .button {
   min-height: 48px;
@@ -1072,7 +1076,7 @@ textarea.input {
   color: var(--teal);
 }
 .closing-cta {
-  padding: 72px 24px;
+  padding: 72px 24px 88px;
   background: #e6f1ed;
   text-align: center;
 }
@@ -1177,6 +1181,16 @@ textarea.input {
     margin-bottom: 19px;
     font-size: 14px;
   }
+  .hero-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .hero-actions .button {
+    width: 100%;
+  }
+  .hero-demo-actions {
+    margin-top: 16px;
+  }
   .hero-note {
     margin-top: 16px;
   }
@@ -1241,7 +1255,7 @@ textarea.input {
     padding: 20px;
   }
   .closing-cta {
-    padding: 54px 18px;
+    padding: 54px 18px 70px;
   }
   .site-footer-inner {
     align-items: flex-start;

@@ -1,13 +1,11 @@
-import path from "node:path";
 import http from "node:http";
-import { fileURLToPath } from "node:url";
+import "./config/env.js";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cron from "node-cron";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
-import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 
 import pool from "./db/pool.js";
@@ -28,10 +26,6 @@ import {
   isUuid,
 } from "./services/chatAuthorization.js";
 import { globalApiLimiter } from "./middleware/rateLimit.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, "../.env") });
 
 const isProduction = process.env.NODE_ENV === "production";
 assertProductionEmailConfiguration();

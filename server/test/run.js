@@ -1,11 +1,10 @@
 import { spawnSync } from "node:child_process";
-import dotenv from "dotenv";
+import "../src/config/env.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const serverDir = path.resolve(path.dirname(__filename), "..");
-dotenv.config({ path: path.join(serverDir, ".env") });
 
 function databaseTarget(connectionString) {
   let parsed;
@@ -98,8 +97,10 @@ const nodeStatus = run(
     "--test",
     ...process.argv.slice(2),
     "test/auth.test.js",
+    "test/emailService.test.js",
     "test/appointments-slots.test.js",
     "test/documents-security-chat.test.js",
+    "test/user-delete.test.js",
   ],
   testEnv,
 );

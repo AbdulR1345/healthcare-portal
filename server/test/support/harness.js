@@ -23,62 +23,12 @@ async function availablePort() {
   return port;
 }
 
-async function startSmtpSink() {
-  const server = net.createServer((socket) => {
-    let pending = "";
-    let receivingData = false;
-    let authLoginStep = 0;
-    socket.write("220 local test mail sink\r\n");
-
-    socket.on("data", (chunk) => {
-      pending += chunk.toString("utf8");
-      let end;
-      while ((end = pending.indexOf("\r\n")) >= 0) {
-        const line = pending.slice(0, end);
-        pending = pending.slice(end + 2);
-        if (receivingData) {
-          if (line === ".") {
-            receivingData = false;
-            socket.write("250 message accepted\r\n");
-          }
-          continue;
-        }
-
-        const command = line.split(/\s/, 1)[0].toUpperCase();
-        if (command === "EHLO" || command === "HELO") {
-          socket.write(
-            "250-localhost\r\n250-AUTH PLAIN LOGIN\r\n250 SIZE 1000000\r\n",
-          );
-        } else if (
-          command === "AUTH" &&
-          line.toUpperCase().startsWith("AUTH LOGIN")
-        ) {
-          authLoginStep = 1;
-          socket.write("334 VXNlcm5hbWU6\r\n");
-        } else if (command === "AUTH") {
-          socket.write("235 authentication accepted\r\n");
-        } else if (authLoginStep === 1) {
-          authLoginStep = 2;
-          socket.write("334 UGFzc3dvcmQ6\r\n");
-        } else if (authLoginStep === 2) {
-          authLoginStep = 0;
-          socket.write("235 authentication accepted\r\n");
-        } else if (
-          command === "MAIL" ||
-          command === "RCPT" ||
-          command === "RSET"
-        ) {
-          socket.write("250 accepted\r\n");
-        } else if (command === "DATA") {
-          receivingData = true;
-          socket.write("354 end with dot\r\n");
-        } else if (command === "QUIT") {
-          socket.write("221 bye\r\n");
-          socket.end();
-        } else {
-          socket.write("250 accepted\r\n");
-        }
-      }
+async function startResendSink() {
+  const server = http.createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ id: "integration-test-email-id" }));
     });
   });
   await new Promise((resolve, reject) => {
@@ -86,7 +36,7 @@ async function startSmtpSink() {
     server.listen(0, "127.0.0.1", resolve);
   });
   return {
-    port: server.address().port,
+    url: `http://127.0.0.1:${server.address().port}`,
     close: () =>
       new Promise((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -244,10 +194,11 @@ export async function startHarness({
     availablePort(),
     fs.mkdtemp(path.join(os.tmpdir(), "healthcare-portal-api-test-")),
   ]);
-  const smtp = await startSmtpSink();
+  const resend = await startResendSink();
   const ai = await startAiStub();
   const objectStore = await startObjectStore();
   const testToken = "integration-test-only-ai-token";
+  const rateLimitNamespace = crypto.randomUUID();
   const child = spawn(process.execPath, ["src/index.js"], {
     cwd: serverDir,
     stdio: ["ignore", "pipe", "pipe"],
@@ -255,7 +206,7 @@ export async function startHarness({
       ...process.env,
       NODE_ENV: nodeEnv,
       PORT: String(port),
-      RATE_LIMIT_NAMESPACE: crypto.randomUUID(),
+      RATE_LIMIT_NAMESPACE: rateLimitNamespace,
       API_RATE_LIMIT_MAX: "10000",
       LOGIN_RATE_LIMIT_MAX: "10000",
       REGISTRATION_RATE_LIMIT_MAX: "10000",
@@ -280,11 +231,9 @@ export async function startHarness({
       S3_ENDPOINT: objectStore.endpoint,
       S3_FORCE_PATH_STYLE: "true",
       CLIENT_URL: "http://localhost:5173",
-      SMTP_HOST: "127.0.0.1",
-      SMTP_PORT: String(smtp.port),
-      SMTP_USER: "integration-test-user",
-      SMTP_PASS: "integration-test-password",
-      SMTP_SECURE: "false",
+      RESEND_API_KEY: "integration-test-resend-key",
+      EMAIL_FROM: "Healthcare Portal <noreply@example.test>",
+      RESEND_BASE_URL: resend.url,
       ...rateLimitOverrides,
     },
   });
@@ -300,7 +249,7 @@ export async function startHarness({
   try {
     await waitForApi(child, baseUrl);
   } catch (error) {
-    await smtp.close();
+    await resend.close();
     await ai.close();
     await objectStore.close();
     await fs.rm(uploadDir, { recursive: true, force: true });
@@ -309,6 +258,7 @@ export async function startHarness({
 
   return {
     baseUrl,
+    rateLimitNamespace,
     ai,
     objectStore,
     aiToken: testToken,
@@ -333,7 +283,7 @@ export async function startHarness({
           });
         });
       }
-      await Promise.all([smtp.close(), ai.close(), objectStore.close()]);
+      await Promise.all([resend.close(), ai.close(), objectStore.close()]);
       await fs.rm(uploadDir, { recursive: true, force: true });
     },
   };

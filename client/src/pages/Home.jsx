@@ -11,11 +11,33 @@ import {
   Stethoscope,
   UserRound,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 const doctorSearchHref = "/login?returnTo=%2Fdoctors";
 
 export default function Home() {
+  const { demoLogin } = useAuth();
+  const navigate = useNavigate();
+  const [demoLoading, setDemoLoading] = useState(null);
+  const [demoError, setDemoError] = useState("");
+
+  const handleDemoLogin = async (role) => {
+    setDemoLoading(role);
+    setDemoError("");
+
+    try {
+      const user = await demoLogin(role);
+      const destination = user.role === "doctor" ? "/doctor" : "/dashboard";
+      navigate(destination, { replace: true });
+    } catch (error) {
+      setDemoError(error.message || "Demo access is unavailable right now.");
+    } finally {
+      setDemoLoading(null);
+    }
+  };
+
   return (
     <>
       <main className="home-page">
@@ -30,7 +52,7 @@ export default function Home() {
                 Find the right clinician, manage appointments, and keep your
                 health records close at hand, all in one secure place.
               </p>
-              <div className="hero-actions">
+              <div className="hero-actions hero-primary-actions">
                 <Link className="button button-primary" to={doctorSearchHref}>
                   Find a doctor <ArrowRight size={16} />
                 </Link>
@@ -38,6 +60,29 @@ export default function Home() {
                   Create your account
                 </Link>
               </div>
+              <div className="hero-actions hero-demo-actions">
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => handleDemoLogin("patient")}
+                  disabled={demoLoading !== null}
+                >
+                  {demoLoading === "patient" ? "Loading demo..." : "Try as Patient"}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => handleDemoLogin("doctor")}
+                  disabled={demoLoading !== null}
+                >
+                  {demoLoading === "doctor" ? "Loading demo..." : "Try as Doctor"}
+                </button>
+              </div>
+              {demoError && (
+                <div className="alert alert-error" role="alert">
+                  {demoError}
+                </div>
+              )}
               <div className="hero-note">
                 <ShieldCheck size={16} /> Private access to your appointments
                 and medical records

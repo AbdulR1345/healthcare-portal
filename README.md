@@ -107,7 +107,7 @@ completionRate = (completedAppointments / totalAppointments) × 100
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - Docker Desktop (recommended) or local PostgreSQL 14+
 - Python 3.10+ (optional, for AI service)
 
@@ -174,29 +174,27 @@ To build only the frontend:
 npm run build
 ```
 
-### Email Reminders (Optional)
+### Transactional Email (Resend)
 
-Add SMTP credentials to `server/.env` to send real email reminders:
+Add a Resend API key and a verified sender address to `server/.env` to deliver verification, password-reset, and appointment reminder emails:
 
 ```env
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your@gmail.com
-SMTP_PASS=your-app-password
-SMTP_FROM=Healthcare Portal <noreply@healthcare.com>
+RESEND_API_KEY=re_...
+EMAIL_FROM=Healthcare Portal <noreply@your-verified-domain.example>
 ```
 
-Without SMTP, reminders still work via in-app Socket.IO notifications and console logs.
+Keep `RESEND_API_KEY` only in the backend environment; never add it to client/Vite variables. In Resend, verify the sending domain and configure the sender address before delivery. Without a key, local development skips email delivery without logging verification or password-reset links; in-app Socket.IO notifications remain available.
 
 ---
 
-## Demo Credentials
+## Demo Access
 
-| Role    | Email                | Password    |
-| ------- | -------------------- | ----------- |
-| Patient | patient@demo.com     | password123 |
-| Doctor  | doctor@demo.com      | password123 |
-| Admin   | admin@healthcare.com | password123 |
+The portfolio deployment can enable approved demo sessions without weakening production authentication. Demo access is intentionally limited to the `patient` and `doctor` roles and is unavailable unless `DEMO_MODE_ENABLED=true`.
+
+- Use `npm run demo:seed` to create or refresh the synthetic demo accounts.
+- The frontend never receives demo passwords or login credentials.
+- Demo users are clearly marked as demo accounts internally and are not admins.
+- Normal registration and email verification remain unchanged for production users.
 
 ---
 
@@ -239,12 +237,12 @@ Without SMTP, reminders still work via in-app Socket.IO notifications and consol
 
 ## Bonus Features
 
-| Feature                                 | Status                       |
-| --------------------------------------- | ---------------------------- |
-| AI appointment assistant                | ✅ Live in doctor search     |
-| Email/SMS reminders                     | ✅ Email via SMTP (optional) |
-| Calendar sync · Payments · Video        | 🔜 Roadmap                   |
-| PWA · Analytics · Digital prescriptions | 🔜 Roadmap                   |
+| Feature                                 | Status                   |
+| --------------------------------------- | ------------------------ |
+| AI appointment assistant                | ✅ Live in doctor search |
+| Email/SMS reminders                     | ✅ Email via Resend      |
+| Calendar sync · Payments · Video        | 🔜 Roadmap               |
+| PWA · Analytics · Digital prescriptions | 🔜 Roadmap               |
 
 ---
 
@@ -300,10 +298,12 @@ Use a unique password that meets the registration password rules. The command cr
 | ------------------ | ------------------------------------------------------------------- |
 | `DATABASE_URL`     | Auto from Render PostgreSQL                                         |
 | `JWT_SECRET`       | Auto-generated                                                      |
+| `DEMO_MODE_ENABLED` | `false` by default; set to `true` only for the portfolio demo deployment |
 | `CLIENT_URL`       | `https://your-app.vercel.app`                                       |
 | `CLINIC_TIME_ZONE` | IANA timezone for clinic scheduling, for example `America/New_York` |
 | `AI_SERVICE_URL`   | Auto from healthcare-ai service                                     |
-| `SMTP_*`           | Optional email settings                                             |
+| `RESEND_API_KEY`   | Required; create a server-side API key in Resend                    |
+| `EMAIL_FROM`       | Required; sender address on a domain verified in Resend             |
 
 The API defaults `CLINIC_TIME_ZONE` to UTC if unset. Rate-limit counters are stored in PostgreSQL and shared across API instances; the API start command applies their migration automatically. `/api/health` is a lightweight liveness check, while `/api/ready` verifies PostgreSQL availability and is used by Render.
 
