@@ -118,6 +118,7 @@ export default function PatientDashboard() {
       <header className="dashboard-welcome">
         <div>
           <p className="eyebrow">Patient workspace</p>
+          {user?.is_demo && <span className="badge badge-demo">Demo workspace</span>}
           <h1>
             Good{" "}
             {new Date().getHours() < 12

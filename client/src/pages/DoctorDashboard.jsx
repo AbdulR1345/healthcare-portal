@@ -8,10 +8,12 @@ import {
   Users,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
 import AppointmentCard from "../components/Appointment";
 
 export default function DoctorDashboard() {
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [conversations, setConversations] = useState([]);
@@ -99,6 +101,7 @@ export default function DoctorDashboard() {
       <header className="dashboard-welcome">
         <div>
           <p className="eyebrow">Clinician workspace</p>
+          {user?.is_demo && <span className="badge badge-demo">Demo workspace</span>}
           <h1>Today's care, at a glance.</h1>
           <p>Review your schedule and stay connected with patients.</p>
         </div>
