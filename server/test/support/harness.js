@@ -231,6 +231,7 @@ export async function startHarness({
       S3_ENDPOINT: objectStore.endpoint,
       S3_FORCE_PATH_STYLE: "true",
       CLIENT_URL: "http://localhost:5173",
+      EMAIL_PROVIDER: "resend",
       RESEND_API_KEY: "integration-test-resend-key",
       EMAIL_FROM: "Healthcare Portal <noreply@example.test>",
       RESEND_BASE_URL: resend.url,

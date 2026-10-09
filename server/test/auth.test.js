@@ -19,10 +19,12 @@ after(async () => {
 test("production email configuration fails closed without Resend", () => {
   const previous = {
     nodeEnv: process.env.NODE_ENV,
+    provider: process.env.EMAIL_PROVIDER,
     apiKey: process.env.RESEND_API_KEY,
     from: process.env.EMAIL_FROM,
   };
   process.env.NODE_ENV = "production";
+  process.env.EMAIL_PROVIDER = "resend";
   delete process.env.RESEND_API_KEY;
   delete process.env.EMAIL_FROM;
 
@@ -30,6 +32,8 @@ test("production email configuration fails closed without Resend", () => {
 
   if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = previous.nodeEnv;
+  if (previous.provider === undefined) delete process.env.EMAIL_PROVIDER;
+  else process.env.EMAIL_PROVIDER = previous.provider;
   for (const [name, value] of [
     ["RESEND_API_KEY", previous.apiKey],
     ["EMAIL_FROM", previous.from],

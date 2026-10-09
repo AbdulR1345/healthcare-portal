@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import nodemailer from "nodemailer";
 import {
   assertProductionEmailConfiguration,
   isConfigured,
@@ -57,16 +58,29 @@ async function withMockedFetch(fetchImplementation, callback) {
 
 const configuredEnvironment = {
   NODE_ENV: "test",
+  EMAIL_PROVIDER: "resend",
   RESEND_API_KEY: "test-resend-api-key",
   EMAIL_FROM: "Healthcare Portal <noreply@example.test>",
 };
 
-test("Resend configuration loads from the root environment file", () => {
+const smtpEnvironment = {
+  NODE_ENV: "test",
+  EMAIL_PROVIDER: "smtp",
+  SMTP_HOST: "smtp.gmail.com",
+  SMTP_PORT: "465",
+  SMTP_SECURE: "true",
+  SMTP_USER: "carepath@example.test",
+  SMTP_PASS: "test-google-app-password",
+  EMAIL_FROM: "Carepath <carepath@example.test>",
+};
+
+test("email configuration loads from the root environment file", () => {
   const serverDir = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "..",
   );
   const childEnvironment = { ...process.env };
+  delete childEnvironment.EMAIL_PROVIDER;
   delete childEnvironment.RESEND_API_KEY;
   delete childEnvironment.EMAIL_FROM;
 
@@ -115,24 +129,83 @@ test("missing Resend configuration skips delivery safely in development", async 
   );
 });
 
-test("production configuration requires both Resend environment variables", async () => {
-  await withEnvironment({ NODE_ENV: "production" }, async () => {
-    for (const configuration of [
-      { RESEND_API_KEY: undefined, EMAIL_FROM: undefined },
-      { RESEND_API_KEY: "test-resend-api-key", EMAIL_FROM: undefined },
-      { RESEND_API_KEY: undefined, EMAIL_FROM: "noreply@example.test" },
-    ]) {
-      await withEnvironment(configuration, async () => {
-        assert.equal(isConfigured(), false);
-        assert.throws(assertProductionEmailConfiguration, /RESEND_API_KEY/);
-      });
-    }
+test("production Resend configuration requires both provider environment variables", async () => {
+  await withEnvironment(
+    { NODE_ENV: "production", EMAIL_PROVIDER: "resend" },
+    async () => {
+      for (const configuration of [
+        { RESEND_API_KEY: undefined, EMAIL_FROM: undefined },
+        { RESEND_API_KEY: "test-resend-api-key", EMAIL_FROM: undefined },
+        { RESEND_API_KEY: undefined, EMAIL_FROM: "noreply@example.test" },
+      ]) {
+        await withEnvironment(configuration, async () => {
+          assert.equal(isConfigured(), false);
+          assert.throws(assertProductionEmailConfiguration, /RESEND_API_KEY/);
+        });
+      }
 
-    await withEnvironment(configuredEnvironment, async () => {
-      assert.equal(isConfigured(), true);
-      assert.doesNotThrow(assertProductionEmailConfiguration);
-    });
-  });
+      await withEnvironment(configuredEnvironment, async () => {
+        assert.equal(isConfigured(), true);
+        assert.doesNotThrow(assertProductionEmailConfiguration);
+      });
+    },
+  );
+});
+
+test("production SMTP configuration requires credentials and matching sender", async () => {
+  await withEnvironment(
+    { NODE_ENV: "production", EMAIL_PROVIDER: "smtp" },
+    async () => {
+      for (const configuration of [
+        {
+          SMTP_HOST: undefined,
+          SMTP_PORT: undefined,
+          SMTP_SECURE: undefined,
+          SMTP_USER: undefined,
+          SMTP_PASS: undefined,
+          EMAIL_FROM: undefined,
+        },
+        {
+          ...smtpEnvironment,
+          NODE_ENV: "production",
+          SMTP_PASS: undefined,
+        },
+        {
+          ...smtpEnvironment,
+          NODE_ENV: "production",
+          SMTP_PORT: "not-a-port",
+        },
+        {
+          ...smtpEnvironment,
+          NODE_ENV: "production",
+          EMAIL_FROM: "Carepath <different@example.test>",
+        },
+      ]) {
+        await withEnvironment(configuration, async () => {
+          assert.equal(isConfigured(), false);
+          assert.throws(assertProductionEmailConfiguration, /SMTP/);
+        });
+      }
+
+      await withEnvironment(
+        { ...smtpEnvironment, NODE_ENV: "production" },
+        async () => {
+          assert.equal(isConfigured(), true);
+          assert.doesNotThrow(assertProductionEmailConfiguration);
+        },
+      );
+
+      await withEnvironment(
+        { EMAIL_PROVIDER: "unsupported" },
+        async () => {
+          assert.throws(
+            assertProductionEmailConfiguration,
+            /EMAIL_PROVIDER must be either resend or smtp/,
+          );
+        },
+      );
+    },
+  );
 });
 
 test("verification email sends its existing URL through Resend", async () => {
@@ -271,4 +344,84 @@ test("appointment reminders preserve their content through Resend", async () => 
   assert.equal(body.subject, "Appointment reminder");
   assert.equal(body.text, message);
   assert.ok(body.html.includes(message));
+});
+
+test("SMTP sends verification email through a mocked Nodemailer transport", async () => {
+  const verificationUrl =
+    "https://portal.test/verify-email?token=existing-verification-token";
+  const originalCreateTransport = nodemailer.createTransport;
+  let transportOptions;
+  let sentMessage;
+
+  nodemailer.createTransport = (options) => {
+    transportOptions = options;
+    return {
+      sendMail: async (message) => {
+        sentMessage = message;
+        return { messageId: "mock-email-id" };
+      },
+    };
+  };
+
+  try {
+    await withEnvironment(smtpEnvironment, async () => {
+      const result = await sendVerificationEmail({
+        to: "patient@example.test",
+        fullName: "Test Patient",
+        verificationUrl,
+      });
+      assert.deepEqual(result, { sent: true });
+    });
+  } finally {
+    nodemailer.createTransport = originalCreateTransport;
+  }
+
+  assert.deepEqual(transportOptions, {
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: {
+      user: smtpEnvironment.SMTP_USER,
+      pass: smtpEnvironment.SMTP_PASS,
+    },
+  });
+  assert.equal(sentMessage.from, smtpEnvironment.EMAIL_FROM);
+  assert.equal(sentMessage.to, "patient@example.test");
+  assert.equal(sentMessage.subject, "Verify your Healthcare Portal email");
+  assert.ok(sentMessage.text.includes(verificationUrl));
+  assert.ok(sentMessage.html.includes(verificationUrl));
+});
+
+test("SMTP failures never log credentials or email links", async () => {
+  const originalCreateTransport = nodemailer.createTransport;
+  const failureEnvironment = {
+    ...smtpEnvironment,
+    SMTP_PASS: "different-test-google-app-password",
+  };
+  const verificationUrl =
+    "https://portal.test/verify-email?token=verification-token-secret";
+  nodemailer.createTransport = () => ({
+    sendMail: async () => {
+      throw new Error(`${failureEnvironment.SMTP_PASS} ${verificationUrl}`);
+    },
+  });
+
+  try {
+    await withEnvironment(failureEnvironment, async () => {
+      const { result, logs } = await withCapturedLogs(() =>
+        sendVerificationEmail({
+          to: "patient@example.test",
+          fullName: "Test Patient",
+          verificationUrl,
+        }),
+      );
+      assert.deepEqual(result, { sent: false, reason: "smtp_send_failed" });
+      assert.doesNotMatch(
+        logs,
+        /different-test-google-app-password|verification-token-secret|https:\/\/portal\.test/,
+      );
+    });
+  } finally {
+    nodemailer.createTransport = originalCreateTransport;
+  }
 });
