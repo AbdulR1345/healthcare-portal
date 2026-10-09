@@ -27,6 +27,9 @@ export default function Notifications() {
 
   useEffect(() => {
     loadNotifications();
+    window.addEventListener("appointments:changed", loadNotifications);
+    return () =>
+      window.removeEventListener("appointments:changed", loadNotifications);
   }, [user.role]);
 
   if (loading)

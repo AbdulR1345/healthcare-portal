@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { api } from "../services/api";
+import { api, notifyAppointmentsChanged } from "../services/api";
 import AppointmentCard from "../components/Appointment";
 
 export default function PatientDashboard() {
@@ -25,6 +25,7 @@ export default function PatientDashboard() {
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState({});
   const [actionError, setActionError] = useState("");
+  const [cancelling, setCancelling] = useState(false);
 
   const loadDashboard = () => {
     setLoading(true);
@@ -56,6 +57,9 @@ export default function PatientDashboard() {
 
   useEffect(() => {
     loadDashboard();
+    window.addEventListener("appointments:changed", loadDashboard);
+    return () =>
+      window.removeEventListener("appointments:changed", loadDashboard);
   }, []);
 
   const appointments = dashboard.appointments;
@@ -86,7 +90,13 @@ export default function PatientDashboard() {
   const recentDocuments = dashboard.documents.slice(0, 4);
 
   const handleCancel = async (id) => {
+    if (
+      !window.confirm("Cancel this appointment? This action cannot be undone.")
+    ) {
+      return;
+    }
     setActionError("");
+    setCancelling(true);
     try {
       const updated = await api.appointments.updateStatus(id, "cancelled");
       setDashboard((current) => ({
@@ -95,8 +105,11 @@ export default function PatientDashboard() {
           item.id === id ? { ...item, ...updated } : item,
         ),
       }));
+      notifyAppointmentsChanged();
     } catch (err) {
       setActionError(err.message);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -201,6 +214,7 @@ export default function PatientDashboard() {
                   onStatusChange={(id, status) =>
                     status === "cancelled" && handleCancel(id)
                   }
+                  updating={cancelling}
                 />
               ))}
             </div>

@@ -12,6 +12,7 @@ import DoctorCard from "../components/DoctorCard";
 
 export default function DoctorSearch() {
   const [doctors, setDoctors] = useState([]);
+  const [specialties, setSpecialties] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [aiQuery, setAiQuery] = useState("");
@@ -36,8 +37,20 @@ export default function DoctorSearch() {
     );
     try {
       const result = await api.doctors.search(params);
-      setDoctors(Array.isArray(result) ? result : []);
+      const matchingDoctors = Array.isArray(result) ? result : [];
+      setDoctors(matchingDoctors);
+      setSpecialties((current) =>
+        [
+          ...new Set([
+            ...current,
+            ...matchingDoctors
+              .map((doctor) => doctor.specialization)
+              .filter(Boolean),
+          ]),
+        ].sort((a, b) => a.localeCompare(b)),
+      );
     } catch (error) {
+      setDoctors([]);
       setLoadError(error.message);
     } finally {
       setLoading(false);
@@ -183,13 +196,19 @@ export default function DoctorSearch() {
           </div>
           <div className="form-group">
             <label htmlFor="specialization">Specialty</label>
-            <input
+            <select
               id="specialization"
               name="specialization"
               value={filters.specialization}
               onChange={handleChange}
-              placeholder="e.g. Cardiology"
-            />
+            >
+              <option value="">All specialties</option>
+              {specialties.map((specialty) => (
+                <option key={specialty} value={specialty}>
+                  {specialty}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="form-group">
             <label htmlFor="location">Location</label>

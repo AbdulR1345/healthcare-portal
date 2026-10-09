@@ -5,6 +5,7 @@ export default function AppointmentCard({
   appointment,
   onStatusChange,
   showPatient,
+  updating = false,
 }) {
   const formatDate = (date) =>
     new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
@@ -73,6 +74,7 @@ export default function AppointmentCard({
             <button
               key={status}
               className={`button button-small ${status === "cancelled" ? "button-danger" : "button-secondary"}`}
+              disabled={updating}
               onClick={() => onStatusChange(appointment.id, status)}
             >
               {label}

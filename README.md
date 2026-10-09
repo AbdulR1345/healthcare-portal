@@ -64,8 +64,12 @@ Filter by specialization, location, availability, fee, experience, and language.
 
 ### 3. Appointment Booking
 
-Select doctor → view slots → book / cancel / reschedule  
-Statuses: `scheduled` → `confirmed` → `completed`
+Search doctors by name or specialty, review clinician profiles, and choose from
+live available dates and times. Patients can book, cancel, or reschedule
+appointments; appointment views separate upcoming, past, completed, and
+cancelled visits.
+
+Statuses: `scheduled` → `confirmed` → `completed` (or `cancelled`)
 
 ### 4. Doctor Dashboard
 

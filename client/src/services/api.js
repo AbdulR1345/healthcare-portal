@@ -2,6 +2,10 @@ import { apiUrl } from "../config";
 
 let refreshRequest;
 
+export function notifyAppointmentsChanged() {
+  window.dispatchEvent(new Event("appointments:changed"));
+}
+
 function clearAccessToken() {
   localStorage.removeItem("token");
   window.dispatchEvent(new Event("auth:expired"));

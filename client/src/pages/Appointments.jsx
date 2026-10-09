@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { api } from "../services/api";
+import { api, notifyAppointmentsChanged } from "../services/api";
 import AppointmentCard from "../components/Appointment";
 
 function formatDate(date) {
@@ -49,35 +49,72 @@ export default function Appointments() {
     loadAppointments();
   }, []);
 
+  useEffect(() => {
+    const refreshAppointments = () => {
+      api.appointments
+        .list()
+        .then((result) => setAppointments(Array.isArray(result) ? result : []))
+        .catch((requestError) => setActionError(requestError.message));
+    };
+    window.addEventListener("appointments:changed", refreshAppointments);
+    return () =>
+      window.removeEventListener("appointments:changed", refreshAppointments);
+  }, []);
+
   const appointment = appointmentId
     ? appointments.find((item) => item.id === appointmentId)
     : null;
-  const isUpcoming = (item) =>
-    ["scheduled", "confirmed"].includes(item.status) &&
-    item.appointment_date >= new Date().toLocaleDateString("en-CA");
+  const today = new Date().toLocaleDateString("en-CA");
   const visibleAppointments = useMemo(
     () =>
       appointments.filter((item) => {
-        if (filter === "upcoming") return isUpcoming(item);
-        if (filter === "history") return !isUpcoming(item);
+        if (filter === "upcoming")
+          return (
+            ["scheduled", "confirmed"].includes(item.status) &&
+            item.appointment_date >= today
+          );
+        if (filter === "past")
+          return (
+            ["scheduled", "confirmed"].includes(item.status) &&
+            item.appointment_date < today
+          );
+        if (filter === "completed") return item.status === "completed";
+        if (filter === "cancelled") return item.status === "cancelled";
         return true;
       }),
-    [appointments, filter],
+    [appointments, filter, today],
   );
 
   useEffect(() => {
     if (!rescheduleDate || !appointment || !rescheduling) return;
+    let active = true;
     setSlotsLoading(true);
     setSelectedSlot(null);
+    setRescheduleSlots([]);
     setActionError("");
     api.doctors
       .getSlots(appointment.doctor_id, rescheduleDate)
-      .then((result) => setRescheduleSlots(result.slots || []))
-      .catch((requestError) => setActionError(requestError.message))
-      .finally(() => setSlotsLoading(false));
+      .then((result) => {
+        if (active) setRescheduleSlots(result.slots || []);
+      })
+      .catch((requestError) => {
+        if (active) setActionError(requestError.message);
+      })
+      .finally(() => {
+        if (active) setSlotsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [appointment, rescheduleDate, rescheduling]);
 
   const changeStatus = async (id, status) => {
+    if (
+      status === "cancelled" &&
+      !window.confirm("Cancel this appointment? This action cannot be undone.")
+    ) {
+      return;
+    }
     setUpdating(true);
     setActionError("");
     try {
@@ -87,6 +124,7 @@ export default function Appointments() {
           item.id === id ? { ...item, ...updated } : item,
         ),
       );
+      notifyAppointmentsChanged();
     } catch (requestError) {
       setActionError(requestError.message);
     } finally {
@@ -109,6 +147,7 @@ export default function Appointments() {
           item.id === appointment.id ? { ...item, ...updated } : item,
         ),
       );
+      notifyAppointmentsChanged();
       setRescheduling(false);
       setRescheduleDate("");
       setRescheduleSlots([]);
@@ -186,9 +225,6 @@ export default function Appointments() {
             <div className="appointment-detail-status">
               <span className={`badge badge-${appointment.status}`}>
                 {appointment.status}
-              </span>
-              <span className="muted text-small">
-                Reference {appointment.id.slice(0, 8).toUpperCase()}
               </span>
             </div>
             <div className="appointment-detail-facts">
@@ -270,7 +306,11 @@ export default function Appointments() {
                     type="date"
                     min={new Date().toLocaleDateString("en-CA")}
                     value={rescheduleDate}
-                    onChange={(event) => setRescheduleDate(event.target.value)}
+                    onChange={(event) => {
+                      setRescheduleDate(event.target.value);
+                      setSelectedSlot(null);
+                      setRescheduleSlots([]);
+                    }}
                   />
                 </div>
                 {slotsLoading && (
@@ -286,6 +326,7 @@ export default function Appointments() {
                           key={slot.startTime}
                           className={`slot-button ${selectedSlot?.startTime === slot.startTime ? "is-selected" : ""}`}
                           type="button"
+                          disabled={slot.available === false}
                           onClick={() => setSelectedSlot(slot)}
                         >
                           {slot.startTime.slice(0, 5)}
@@ -331,7 +372,7 @@ export default function Appointments() {
         role="tablist"
         aria-label="Filter appointments"
       >
-        {["upcoming", "history", "all"].map((value) => (
+        {["upcoming", "past", "completed", "cancelled", "all"].map((value) => (
           <button
             key={value}
             type="button"
@@ -342,9 +383,13 @@ export default function Appointments() {
           >
             {value === "upcoming"
               ? "Upcoming"
-              : value === "history"
-                ? "History"
-                : "All"}
+              : value === "past"
+                ? "Past"
+                : value === "completed"
+                  ? "Completed"
+                  : value === "cancelled"
+                    ? "Cancelled"
+                    : "All"}
           </button>
         ))}
       </div>
@@ -357,7 +402,7 @@ export default function Appointments() {
         <div className="empty-state">
           {filter === "upcoming"
             ? "No upcoming appointments."
-            : "No appointments in this view."}
+            : `No ${filter === "all" ? "" : `${filter} `}appointments in this view.`}
           {user.role === "patient" && filter === "upcoming" && (
             <p>
               <Link to="/doctors">Find a clinician</Link>
@@ -372,6 +417,7 @@ export default function Appointments() {
               appointment={item}
               showPatient={showPatient}
               onStatusChange={changeStatus}
+              updating={updating}
             />
           ))}
         </div>

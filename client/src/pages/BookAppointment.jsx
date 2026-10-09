@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -7,13 +7,13 @@ import {
   MapPin,
   ShieldCheck,
 } from "lucide-react";
-import { Link } from "react-router-dom";
-import { useParams, useNavigate } from "react-router-dom";
-import { api } from "../services/api";
+import { Link, useParams } from "react-router-dom";
+import { api, notifyAppointmentsChanged } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 export default function BookAppointment() {
   const { doctorId } = useParams();
-  const navigate = useNavigate();
+  const { user } = useAuth();
   const [doctor, setDoctor] = useState(null);
   const [date, setDate] = useState("");
   const [slots, setSlots] = useState([]);
@@ -25,28 +25,60 @@ export default function BookAppointment() {
   const [error, setError] = useState("");
   const [createdAppointment, setCreatedAppointment] = useState(null);
   const [step, setStep] = useState("schedule");
+  const bookingInProgress = useRef(false);
 
   useEffect(() => {
+    let active = true;
     api.doctors
       .getById(doctorId)
-      .then(setDoctor)
-      .catch(() => setError("Doctor not found"))
-      .finally(() => setLoading(false));
+      .then((result) => {
+        if (active) setDoctor(result);
+      })
+      .catch((requestError) => {
+        if (active) setError(requestError.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [doctorId]);
 
   useEffect(() => {
     if (!date) return;
+    let active = true;
     setSlotsLoading(true);
     setError("");
     api.doctors
       .getSlots(doctorId, date)
-      .then((data) => setSlots(data.slots || []))
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setSlotsLoading(false));
+      .then((data) => {
+        if (active) setSlots(data.slots || []);
+      })
+      .catch((requestError) => {
+        if (active) {
+          setSlots([]);
+          setError(requestError.message);
+        }
+      })
+      .finally(() => {
+        if (active) setSlotsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [doctorId, date]);
 
   const handleBook = async () => {
-    if (!selectedSlot || !date) return;
+    if (
+      !selectedSlot ||
+      !date ||
+      bookingInProgress.current ||
+      user?.role !== "patient"
+    ) {
+      return;
+    }
+    bookingInProgress.current = true;
     setBooking(true);
     setError("");
 
@@ -60,9 +92,34 @@ export default function BookAppointment() {
       });
       setCreatedAppointment(result);
       setStep("success");
+      notifyAppointmentsChanged();
     } catch (err) {
-      setError(err.message);
+      if (err.status === 409) {
+        setError(
+          "That time is no longer available. Please choose another available time.",
+        );
+        setSelectedSlot(null);
+        setSlotsLoading(true);
+        try {
+          const data = await api.doctors.getSlots(doctorId, date);
+          setSlots(data.slots || []);
+        } catch (refreshError) {
+          setError(refreshError.message);
+        } finally {
+          setSlotsLoading(false);
+        }
+      } else if (err.status === 400) {
+        setError(`Please review the appointment details: ${err.message}`);
+      } else if (err.status === 401) {
+        setError("Your session has expired. Please sign in again to book.");
+      } else {
+        setError(
+          err.message ||
+            "We couldn't book this appointment. Please try again.",
+        );
+      }
     } finally {
+      bookingInProgress.current = false;
       setBooking(false);
     }
   };
@@ -71,6 +128,17 @@ export default function BookAppointment() {
   const minDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
   if (loading) return <div className="loading">Loading...</div>;
+  if (user?.role !== "patient")
+    return (
+      <main className="container">
+        <div className="alert alert-error" role="alert">
+          Sign in with a patient account to book an appointment.
+        </div>
+        <Link className="button button-primary" to="/login">
+          Sign in
+        </Link>
+      </main>
+    );
   if (!doctor)
     return (
       <main className="container">
@@ -205,7 +273,7 @@ export default function BookAppointment() {
                       key={`${slot.startTime}-${slot.endTime}`}
                       type="button"
                       className={`slot-button ${selectedSlot?.startTime === slot.startTime ? "is-selected" : ""}`}
-                      disabled={slot.available === false}
+                      disabled={slotsLoading || slot.available === false}
                       onClick={() => {
                         setSelectedSlot(slot);
                         setStep("details");
