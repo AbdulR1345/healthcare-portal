@@ -185,7 +185,7 @@ export async function sendVerificationEmail({ to, fullName, verificationUrl }) {
 
   const text = `Hello ${fullName || "there"},
 
-Please verify your email address to activate your Healthcare Portal account.
+Email verification is optional. You can sign in before verifying your address.
 
 Verify your email:
 ${verificationUrl}
@@ -203,8 +203,8 @@ Healthcare Portal`;
       <p>Hello ${safeName},</p>
 
       <p>
-        Please verify your email address to activate your
-        Healthcare Portal account.
+        Email verification is optional. You can sign in before verifying
+        your address.
       </p>
 
       <p style="margin: 28px 0;">

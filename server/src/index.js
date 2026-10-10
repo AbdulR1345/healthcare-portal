@@ -10,7 +10,6 @@ import cookieParser from "cookie-parser";
 
 import pool from "./db/pool.js";
 import {
-  assertProductionEmailConfiguration,
   sendReminderEmail,
 } from "./services/emailService.js";
 import { assertProductionStorageConfiguration } from "./services/documentStorage.js";
@@ -28,7 +27,6 @@ import {
 import { globalApiLimiter } from "./middleware/rateLimit.js";
 
 const isProduction = process.env.NODE_ENV === "production";
-assertProductionEmailConfiguration();
 assertProductionStorageConfiguration();
 const jwtSecret = process.env.JWT_SECRET || "";
 const isPlaceholderSecret =
@@ -47,21 +45,39 @@ const app = express();
 const server = http.createServer(app);
 app.set("trust proxy", isProduction ? 1 : false);
 
-const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
+const configuredOrigins = (process.env.CLIENT_URL || "")
   .split(",")
-  .map((o) => o.trim());
+  .map((origin) => origin.trim())
+  .map((origin) => {
+    try {
+      return new URL(origin).origin;
+    } catch {
+      return origin.replace(/\/+$/, "");
+    }
+  })
+  .filter(Boolean);
+
+const allowedOrigins =
+  configuredOrigins.length > 0
+    ? configuredOrigins
+    : isProduction
+      ? []
+      : ["http://localhost:5173"];
+
+if (isProduction && allowedOrigins.length === 0) {
+  throw new Error(
+    "CLIENT_URL must be configured with an allowed frontend origin in production.",
+  );
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (
-      !origin ||
-      allowedOrigins.includes(origin) ||
-      allowedOrigins.includes("*")
-    ) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
-    } else {
-      callback(null, allowedOrigins[0]);
+      return;
     }
+
+    callback(null, false);
   },
   credentials: true,
 };

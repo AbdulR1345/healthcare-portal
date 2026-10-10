@@ -61,9 +61,7 @@ export default function Register() {
         location: form.location.trim() || undefined,
         fee: form.fee ? Number(form.fee) : undefined,
       });
-      navigate(`/verify-email?email=${encodeURIComponent(form.email.trim())}`, {
-        state: { awaitingVerification: true },
-      });
+      navigate("/login", { state: { registered: true } });
     } catch (err) {
       setError(err.message);
       setFieldErrors(
@@ -93,8 +91,8 @@ export default function Register() {
             a private account.
           </p>
           <div className="auth-privacy">
-            <LockKeyhole size={16} /> Email verification is required before
-            sign-in
+            <LockKeyhole size={16} /> Sign in immediately; email verification
+            is optional
           </div>
         </div>
         <p className="auth-aside-foot">Carepath is not for emergency use.</p>

@@ -24,7 +24,9 @@ async function availablePort() {
 }
 
 async function startResendSink() {
+  let requestCount = 0;
   const server = http.createServer((request, response) => {
+    requestCount += 1;
     request.resume();
     request.on("end", () => {
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -37,6 +39,9 @@ async function startResendSink() {
   });
   return {
     url: `http://127.0.0.1:${server.address().port}`,
+    get requestCount() {
+      return requestCount;
+    },
     close: () =>
       new Promise((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -260,6 +265,9 @@ export async function startHarness({
   return {
     baseUrl,
     rateLimitNamespace,
+    get emailRequestCount() {
+      return resend.requestCount;
+    },
     ai,
     objectStore,
     aiToken: testToken,

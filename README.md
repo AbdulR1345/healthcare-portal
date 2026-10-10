@@ -180,7 +180,7 @@ npm run build
 
 ### Transactional Email
 
-The API supports Resend and SMTP. `EMAIL_PROVIDER` defaults to `resend`; set it to `smtp` to use a dedicated Gmail account for verification, password-reset, and appointment reminder emails.
+The API supports Resend and SMTP. `EMAIL_PROVIDER` defaults to `resend`; set it to `smtp` to use a dedicated Gmail account for optional verification, password-reset, and appointment reminder emails. New accounts can sign in immediately without verifying their email.
 
 For a Gmail SMTP setup, enable 2-Step Verification on the dedicated account and create a Google App Password. Use the App Password, not the account password; remove any spaces Google inserts when displaying it. Configure these values in `server/.env` for local use or in the Render API service environment for production:
 
@@ -194,18 +194,19 @@ SMTP_PASS=your-google-app-password
 EMAIL_FROM=Carepath <your-carepath-gmail@gmail.com>
 ```
 
-`EMAIL_FROM` must use the same email address as `SMTP_USER`. Keep all SMTP credentials server-side; never put them in `client/.env`, Vite variables, or frontend code. For Resend, set `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `EMAIL_FROM` to a sender address accepted by your Resend account. Local development can still skip delivery when email is not configured; production startup fails unless the selected provider and sender are fully configured. Missing email settings never disable account verification or reset requirements.
+`EMAIL_FROM` must use the same email address as `SMTP_USER`. Keep all SMTP credentials server-side; never put them in `client/.env`, Vite variables, or frontend code. For Resend, set `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `EMAIL_FROM` to a sender address accepted by your Resend account. Email settings are optional for application startup and sign-in; when missing or unavailable, the API continues to allow registration and login, but verification, password-reset, and reminder emails cannot be delivered. Email verification remains available as an optional feature. Password resets still require a verified email address.
 
 ---
 
 ## Demo Access
 
-The portfolio deployment can enable approved demo sessions without weakening production authentication. Demo access is intentionally limited to the `patient` and `doctor` roles and is unavailable unless `DEMO_MODE_ENABLED=true`.
+The portfolio deployment can enable approved demo sessions without weakening production authentication. Demo access is intentionally limited to the `patient` and `doctor` roles and is unavailable unless `DEMO_MODE_ENABLED=true`. Seeded demo accounts are also blocked from normal email/password login unless demo mode is enabled; non-demo accounts continue to use normal login.
 
 - Use `npm run demo:seed` to create or refresh the synthetic demo accounts.
+- To seed a deployed Render database from your machine, provide the database's External Database URL as the process-level `DATABASE_URL` and run `npm run demo:seed` from `server`. A process-level value takes precedence over `.env` files; if both root and server `.env` files define the variable, the root `.env` value is loaded first. The script uses verified TLS for Render database hosts; keep the URL private and never commit it. It only ensures the reserved synthetic demo accounts and associated synthetic records; it does not reset the database.
 - The frontend never receives demo passwords or login credentials.
 - Demo users are clearly marked as demo accounts internally and are not admins.
-- Normal registration and email verification remain unchanged for production users.
+- Registration remains available even when transactional email delivery is unavailable; email verification is optional and does not block login.
 
 ---
 

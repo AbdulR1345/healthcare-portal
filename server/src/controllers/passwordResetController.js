@@ -65,10 +65,29 @@ function getResetExpiry() {
   return expiry;
 }
 
-function getResetUrl(token) {
-  const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+function getClientBaseUrl() {
+  const configured = (process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
-  return `${clientUrl.replace(/\/+$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
+  if (configured.length > 0) {
+    try {
+      return new URL(configured[0]).origin;
+    } catch {
+      return configured[0].replace(/\/+$/, "");
+    }
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:5173";
+  }
+
+  throw new Error("CLIENT_URL must be configured in production.");
+}
+
+function getResetUrl(token) {
+  return `${getClientBaseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
 function isValidResetToken(token) {

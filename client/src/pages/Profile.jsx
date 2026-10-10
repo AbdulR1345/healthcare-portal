@@ -83,7 +83,7 @@ export default function Profile() {
                   <CircleCheck size={15} /> Email status
                 </dt>
                 <dd>
-                  {profile.email_verified ? "Verified" : "Needs verification"}
+                  {profile.email_verified ? "Verified" : "Not verified"}
                 </dd>
               </div>
               <div>
@@ -130,8 +130,8 @@ export default function Profile() {
               <LockKeyhole size={17} /> Account security
             </h3>
             <p>
-              Your healthcare workspace uses verified email and protected
-              session-based sign-in.
+              Email verification is optional. Sign-in uses protected
+              session-based authentication.
             </p>
             <Link to="/forgot-password" className="button button-secondary">
               Reset password

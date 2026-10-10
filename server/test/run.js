@@ -99,6 +99,7 @@ const nodeStatus = run(
     "test/auth.test.js",
     "test/emailService.test.js",
     "test/appointments-slots.test.js",
+    "test/demo-seed.test.js",
     "test/documents-security-chat.test.js",
     "test/user-delete.test.js",
   ],

@@ -490,11 +490,19 @@ async function ensureDemoCareRelationship(client) {
 }
 
 export async function seedDemoAccounts() {
-  const client = await pool.connect();
+  let client;
+  let stage = "database connection";
+
   try {
+    client = await pool.connect();
+
+    stage = "transaction start";
     await client.query("BEGIN");
+
+    stage = "transaction setup";
     await client.query("SELECT pg_advisory_xact_lock(722026, 2)");
 
+    stage = "demo data seeding";
     for (const account of DEMO_ACCOUNTS) {
       await ensureDemoUser(client, account);
     }
@@ -514,15 +522,36 @@ export async function seedDemoAccounts() {
 
     await ensureDemoCareRelationship(client);
 
+    stage = "transaction commit";
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+    let rollbackError;
+    if (client) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (failure) {
+        rollbackError = failure;
+      }
+    }
+
+    const seedError =
+      error instanceof Error ? error : new Error("Demo seed failed.");
+    seedError.demoSeedStage = stage;
+    if (rollbackError) {
+      seedError.demoSeedRollbackCode = rollbackError.code;
+    }
+    throw seedError;
   } finally {
-    client.release();
+    client?.release();
   }
 
   console.log("Demo accounts and synthetic healthcare data ensured successfully.");
+}
+
+function getSafeErrorCode(error) {
+  return typeof error?.code === "string" && /^[A-Za-z0-9_]+$/.test(error.code)
+    ? error.code
+    : "unknown";
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -533,14 +562,28 @@ if (isDirectExecution) {
   try {
     await seedDemoAccounts();
   } catch (error) {
-    const message =
-      error instanceof ReservedDemoEmailConflictError
-        ? error.message
-        : error.code || "unexpected error";
-    console.error("Demo seed failed:", message);
+    const stage = error.demoSeedStage || "unknown stage";
+    console.error(
+      `Demo seed failed during ${stage}; PostgreSQL/network error code: ${getSafeErrorCode(error)}.`,
+    );
+    if (error.demoSeedRollbackCode) {
+      console.error(
+        `Transaction rollback also failed; PostgreSQL/network error code: ${getSafeErrorCode({ code: error.demoSeedRollbackCode })}.`,
+      );
+    }
+    if (error instanceof ReservedDemoEmailConflictError) {
+      console.error(error.message);
+    }
     process.exitCode = 1;
   } finally {
-    await pool.end();
+    try {
+      await pool.end();
+    } catch (error) {
+      console.error(
+        `Demo seed database cleanup failed; PostgreSQL/network error code: ${getSafeErrorCode(error)}.`,
+      );
+      process.exitCode = 1;
+    }
   }
 }
 

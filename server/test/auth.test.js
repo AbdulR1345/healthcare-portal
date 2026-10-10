@@ -216,7 +216,7 @@ function resetTokenFromUrl(resetUrl) {
   return token;
 }
 
-test("registration creates an unverified account and does not return access credentials", async (t) => {
+test("registration keeps optional verification and does not return access credentials", async (t) => {
   const fixture = await createFixture(t);
   const email = `registration-${crypto.randomUUID()}@example.com`;
   const password = "Unique-Registration!7284";
@@ -230,10 +230,71 @@ test("registration creates an unverified account and does not return access cred
 
   assert.equal(result.response.status, 201);
   assert.equal(result.data.user.email_verified, false);
-  assert.equal(result.data.verificationRequired, true);
+  assert.equal(result.data.verificationRequired, false);
   assert.ok(typeof result.data.verificationUrl === "string");
   assert.equal("token" in result.data, false);
   assert.equal("refreshToken" in result.data, false);
+});
+
+test("newly registered unverified users can immediately log in and refresh", async (t) => {
+  const productionHarness = await startHarness({
+    nodeEnv: "production",
+  });
+  t.after(() => productionHarness.close());
+  const fixture = await createFixture(t);
+  const email = `immediate-login-${crypto.randomUUID()}@example.com`;
+  const password = "Unique-Immediate-Login!7284";
+  const registration = await request(
+    productionHarness.baseUrl,
+    "/api/auth/register",
+    {
+      method: "POST",
+      body: {
+        email,
+        password,
+        role: "patient",
+        fullName: "Immediate Login Fixture",
+      },
+    },
+  );
+  assert.equal(registration.response.status, 201);
+  assert.equal(registration.data.user.email_verified, false);
+  assert.equal(registration.data.verificationRequired, false);
+  assert.equal(registration.data.emailSent, false);
+  assert.equal("verificationUrl" in registration.data, false);
+  assert.equal(productionHarness.emailRequestCount, 0);
+  fixture.trackUser(registration.data.user.id);
+
+  const verificationState = await getTestPool().query(
+    `SELECT email_verification_token_hash, email_verification_sent_at
+     FROM users
+     WHERE id = $1`,
+    [registration.data.user.id],
+  );
+  assert.ok(verificationState.rows[0].email_verification_token_hash);
+  assert.equal(verificationState.rows[0].email_verification_sent_at, null);
+
+  const login = await request(productionHarness.baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { email, password },
+  });
+  assert.equal(login.response.status, 200);
+  assert.equal(login.data.user.email_verified, false);
+  assert.equal(typeof login.data.token, "string");
+  assert.ok(refreshCookie(login.response).startsWith("refreshToken="));
+  assert.equal(productionHarness.emailRequestCount, 0);
+
+  const refresh = await request(
+    productionHarness.baseUrl,
+    "/api/auth/refresh",
+    {
+      method: "POST",
+      cookie: refreshCookie(login.response),
+    },
+  );
+  assert.equal(refresh.response.status, 200);
+  assert.equal(typeof refresh.data.token, "string");
+  assert.ok(refreshCookie(refresh.response).startsWith("refreshToken="));
 });
 
 test("duplicate email registration is rejected", async (t) => {
@@ -259,12 +320,86 @@ test("invalid registration data is rejected before insertion", async () => {
   assert.ok(Array.isArray(result.data.errors));
 });
 
-test("verified user can log in and receives access and refresh credentials", async (t) => {
+test("unverified user can log in and receives access and refresh credentials", async (t) => {
   const fixture = await createFixture(t);
-  const user = await fixture.createUser();
+  const user = await fixture.createUser("patient", { emailVerified: false });
   const login = await loginAccount(user.email, user.password);
   assert.ok(login.accessToken.length > 0);
   assert.ok(login.cookie.startsWith("refreshToken="));
+});
+
+test("login rejects unknown users and incorrect passwords", async (t) => {
+  const fixture = await createFixture(t);
+  const user = await fixture.createUser("patient", { emailVerified: false });
+  for (const credentials of [
+    { email: `unknown-${crypto.randomUUID()}@example.com`, password: user.password },
+    { email: user.email, password: "Incorrect-Password!7284" },
+  ]) {
+    const result = await request(harness.baseUrl, "/api/auth/login", {
+      method: "POST",
+      body: credentials,
+    });
+    assert.equal(result.response.status, 401);
+    assert.deepEqual(result.data, { error: "Invalid credentials" });
+    assert.equal(result.response.headers.get("set-cookie"), null);
+  }
+});
+
+test("normal login blocks demo accounts while demo mode is disabled", async (t) => {
+  const disabledHarness = await startHarness({
+    rateLimitOverrides: { DEMO_MODE_ENABLED: "false" },
+  });
+  t.after(() => disabledHarness.close());
+  const fixture = await createFixture(t);
+  const demoUser = await fixture.createUser("patient");
+  await getTestPool().query("UPDATE users SET is_demo = TRUE WHERE id = $1", [
+    demoUser.id,
+  ]);
+
+  const blockedDemoLogin = await request(
+    disabledHarness.baseUrl,
+    "/api/auth/login",
+    {
+      method: "POST",
+      body: { email: demoUser.email, password: demoUser.password },
+    },
+  );
+  assert.equal(blockedDemoLogin.response.status, 401);
+  assert.deepEqual(blockedDemoLogin.data, { error: "Invalid credentials" });
+  assert.equal(blockedDemoLogin.response.headers.get("set-cookie"), null);
+
+  const regularUser = await fixture.createUser("patient");
+  const allowedRegularLogin = await request(
+    disabledHarness.baseUrl,
+    "/api/auth/login",
+    {
+      method: "POST",
+      body: { email: regularUser.email, password: regularUser.password },
+    },
+  );
+  assert.equal(allowedRegularLogin.response.status, 200);
+  assert.equal(typeof allowedRegularLogin.data.token, "string");
+});
+
+test("normal login allows demo accounts while demo mode is enabled", async (t) => {
+  const enabledHarness = await startHarness({
+    rateLimitOverrides: { DEMO_MODE_ENABLED: "true" },
+  });
+  t.after(() => enabledHarness.close());
+  const fixture = await createFixture(t);
+  const demoUser = await fixture.createUser("patient");
+  await getTestPool().query("UPDATE users SET is_demo = TRUE WHERE id = $1", [
+    demoUser.id,
+  ]);
+
+  const result = await request(enabledHarness.baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: { email: demoUser.email, password: demoUser.password },
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.user.is_demo, true);
+  assert.equal(typeof result.data.token, "string");
+  assert.ok(refreshCookie(result.response).startsWith("refreshToken="));
 });
 
 test("admin:create provisions a verified admin and refuses duplicate email", async () => {
@@ -342,15 +477,17 @@ test("JWT_EXPIRES_IN controls access-token expiry", async (t) => {
   assert.equal(claims.exp - claims.iat, 120);
 });
 
-test("login is blocked until email verification", async (t) => {
+test("email verification status does not block login", async (t) => {
   const fixture = await createFixture(t);
   const user = await fixture.createUser("patient", { emailVerified: false });
   const result = await request(harness.baseUrl, "/api/auth/login", {
     method: "POST",
     body: { email: user.email, password: user.password },
   });
-  assert.equal(result.response.status, 403);
-  assert.equal(result.data.code, "EMAIL_NOT_VERIFIED");
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.user.email_verified, false);
+  assert.ok(typeof result.data.token === "string");
+  assert.ok(refreshCookie(result.response).startsWith("refreshToken="));
 });
 
 test("email verification activates the registered account", async (t) => {

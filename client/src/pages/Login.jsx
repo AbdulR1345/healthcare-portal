@@ -108,6 +108,11 @@ export default function Login() {
             Use the email address linked to your account.
           </p>
 
+          {location.state?.registered && (
+            <div className="alert alert-success" role="status">
+              Your account is ready. You can sign in now.
+            </div>
+          )}
           {error && (
             <div className="alert alert-error" role="alert">
               {error}

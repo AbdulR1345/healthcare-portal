@@ -184,10 +184,10 @@ export default function Home() {
             <div className="steps-grid">
               <article className="step-item">
                 <span className="step-number">01</span>
-                <h3>Create a verified account</h3>
+                <h3>Create an account</h3>
                 <p>
-                  Register as a patient or clinician, verify your email, and
-                  sign in to your private workspace.
+                  Register as a patient or clinician and sign in to your
+                  private workspace. Email verification is optional.
                 </p>
               </article>
               <article className="step-item">
@@ -303,8 +303,7 @@ export default function Home() {
           <span className="section-kicker">Your next step</span>
           <h2>Make care easier to coordinate.</h2>
           <p>
-            Start with a verified account and bring your care into one connected
-            workspace.
+            Create an account and bring your care into one connected workspace.
           </p>
           <Link to="/register" className="button button-primary">
             Get started <ArrowRight size={16} />

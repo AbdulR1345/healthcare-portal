@@ -55,10 +55,10 @@ export default function VerifyEmail() {
         </Link>
         <div className="auth-aside-copy">
           <p className="eyebrow">Account verification</p>
-          <h1>One quick check, then you're in.</h1>
+          <h1>Confirm your email when convenient.</h1>
           <p>
-            Verify your email address to protect access to your healthcare
-            workspace.
+            Email verification is optional. You can sign in to your healthcare
+            workspace without verifying your address.
           </p>
           <div className="auth-privacy">
             <LockKeyhole size={16} /> Verification links expire after 24 hours
@@ -103,8 +103,9 @@ export default function VerifyEmail() {
           {status === "pending" && (
             <>
               <p className="auth-intro">
-                If you just registered, use the verification link we sent to
-                your email. You can request another message below.
+                If you want to verify your address, use the link we sent or
+                request another message below. Verification is not required to
+                sign in.
               </p>
               {message && (
                 <div className="alert alert-success" role="status">
@@ -140,7 +141,8 @@ export default function VerifyEmail() {
                 {error}
               </div>
               <p className="auth-intro">
-                Request a fresh verification email to continue.
+                Request a fresh verification email, or sign in without
+                verifying your address.
               </p>
               <form onSubmit={handleResend}>
                 <div className="form-group">

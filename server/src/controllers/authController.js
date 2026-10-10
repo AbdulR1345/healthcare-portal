@@ -44,10 +44,29 @@ function getVerificationExpiry() {
   return expiry;
 }
 
-function getVerificationUrl(token) {
-  const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+function getClientBaseUrl() {
+  const configured = (process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
-  return `${clientUrl.replace(/\/+$/, "")}/verify-email?token=${encodeURIComponent(token)}`;
+  if (configured.length > 0) {
+    try {
+      return new URL(configured[0]).origin;
+    } catch {
+      return configured[0].replace(/\/+$/, "");
+    }
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:5173";
+  }
+
+  throw new Error("CLIENT_URL must be configured in production.");
+}
+
+function getVerificationUrl(token) {
+  return `${getClientBaseUrl()}/verify-email?token=${encodeURIComponent(token)}`;
 }
 
 function isValidVerificationToken(token) {
@@ -213,7 +232,7 @@ export async function register(req, res) {
           email_verification_expires_at,
           email_verification_sent_at
         )
-        VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, NOW())
+        VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, NULL)
         RETURNING
           id,
           email,
@@ -257,18 +276,11 @@ export async function register(req, res) {
 
     const verificationUrl = getVerificationUrl(verificationToken);
 
-    const emailResult = await sendVerificationEmail({
-      to: user.email,
-      fullName: user.full_name,
-      verificationUrl,
-    });
-
     const response = {
-      message:
-        "Registration successful. Please verify your email before logging in.",
+      message: "Registration successful. You can log in now.",
       user,
-      verificationRequired: true,
-      emailSent: emailResult.sent,
+      verificationRequired: false,
+      emailSent: false,
     };
 
     // Only expose the local development URL.
@@ -425,10 +437,9 @@ export async function login(req, res) {
       });
     }
 
-    if (!user.email_verified) {
-      return res.status(403).json({
-        error: "Email verification required",
-        code: "EMAIL_NOT_VERIFIED",
+    if (user.is_demo && !isDemoModeEnabled()) {
+      return res.status(401).json({
+        error: "Invalid credentials",
       });
     }
 
@@ -747,7 +758,7 @@ export async function refreshAccessToken(req, res) {
       [rotated.userId],
     );
 
-    if (!rows.length || !rows[0].email_verified) {
+    if (!rows.length) {
       await revokeSession(rotated.refreshToken);
 
       return res.status(401).json({

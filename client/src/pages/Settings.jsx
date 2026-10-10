@@ -56,7 +56,7 @@ export default function Settings() {
                   <CheckCircle2 size={15} /> Verified
                 </>
               ) : (
-                "Unverified"
+                "Optional"
               )}
             </span>
           </section>
