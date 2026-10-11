@@ -9,6 +9,7 @@
     "dev": "nodemon src/index.js",
     "db:init": "node src/db/init.js",
     "db:migrate": "node src/db/migrate.js",
+    "diagnose:clinicians": "node src/scripts/diagnoseClinicianCounts.js",
     "demo:seed": "node src/scripts/demoSeed.js",
     "admin:create": "node src/scripts/createAdmin.js",
     "user:delete": "node src/scripts/deleteUser.js",

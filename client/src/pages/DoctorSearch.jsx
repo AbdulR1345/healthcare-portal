@@ -39,14 +39,11 @@ export default function DoctorSearch() {
       const result = await api.doctors.search(params);
       const matchingDoctors = Array.isArray(result) ? result : [];
       setDoctors(matchingDoctors);
-      setSpecialties((current) =>
+      setSpecialties(
         [
-          ...new Set([
-            ...current,
-            ...matchingDoctors
-              .map((doctor) => doctor.specialization)
-              .filter(Boolean),
-          ]),
+          ...new Set(
+            matchingDoctors.map((doctor) => doctor.specialization).filter(Boolean),
+          ),
         ].sort((a, b) => a.localeCompare(b)),
       );
     } catch (error) {

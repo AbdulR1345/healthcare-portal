@@ -38,22 +38,43 @@ export default function Chat() {
         const currentPartner = activePartnerRef.current;
         const partnerId =
           msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
-        setConversations((current) =>
-          current.map((conversation) =>
-            conversation.partner_id === partnerId
-              ? {
-                  ...conversation,
-                  last_message: msg.content,
-                  last_at: msg.created_at,
-                  unread_count:
-                    msg.sender_id === user.id ||
-                    currentPartner?.partner_id === partnerId
+        setConversations((current) => {
+          const existing = current.find(
+            (conversation) => conversation.partner_id === partnerId,
+          );
+          const unreadCount =
+            msg.sender_id === user.id ||
+            currentPartner?.partner_id === partnerId;
+
+          if (existing) {
+            return current.map((conversation) =>
+              conversation.partner_id === partnerId
+                ? {
+                    ...conversation,
+                    last_message: msg.content,
+                    last_at: msg.created_at,
+                    unread_count: unreadCount
                       ? 0
                       : Number(conversation.unread_count || 0) + 1,
-                }
-              : conversation,
-          ),
-        );
+                  }
+                : conversation,
+            );
+          }
+
+          if (msg.receiver_id !== user.id) return current;
+
+          return [
+            {
+              partner_id: partnerId,
+              partner_name: msg.sender_name || "Care team",
+              partner_role: user.role === "patient" ? "doctor" : "patient",
+              last_message: msg.content,
+              last_at: msg.created_at,
+              unread_count: unreadCount ? 0 : 1,
+            },
+            ...current,
+          ];
+        });
         if (
           currentPartner?.partner_id === msg.sender_id &&
           msg.receiver_id === user.id

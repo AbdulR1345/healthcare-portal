@@ -56,6 +56,29 @@ test("demo doctor profile is created and valid", async () => {
   assert.ok(profile.experience_years >= 1);
 });
 
+test("demo seed creates four clearly synthetic clinician profiles", async () => {
+  const doctorEmails = DEMO_ACCOUNTS
+    .filter((account) => account.role === "doctor")
+    .map((account) => account.email);
+  const { rows } = await getTestPool().query(
+    `SELECT u.email, u.full_name, u.is_demo, d.specialization, d.bio
+     FROM users u
+     JOIN doctors d ON d.user_id = u.id
+     WHERE u.email = ANY($1::text[])
+     ORDER BY u.email`,
+    [doctorEmails],
+  );
+
+  assert.equal(rows.length, 4);
+  assert.ok(rows.every((doctor) => doctor.is_demo));
+  assert.ok(rows.every((doctor) => doctor.full_name.startsWith("Demo ")));
+  assert.ok(rows.every((doctor) => doctor.bio.includes("Synthetic demo")));
+  assert.deepEqual(
+    new Set(rows.map((doctor) => doctor.specialization)),
+    new Set(["General Practice", "Cardiology", "Dermatology", "Pediatrics"]),
+  );
+});
+
 test("demo seed produces future and historical appointments", async () => {
   const patient = await getUser(DEMO_ACCOUNTS[0].email);
   const doctor = await getUser(DEMO_ACCOUNTS[1].email);
@@ -156,19 +179,47 @@ test("demo notification exists for the demo patient", async () => {
 });
 
 test("running demo seed twice does not duplicate records", async () => {
-  const before = {
-    users: (await getTestPool().query("SELECT COUNT(*)::int AS count FROM users WHERE email IN ($1, $2)", [DEMO_ACCOUNTS[0].email, DEMO_ACCOUNTS[1].email])).rows[0].count,
-    appointments: (await getTestPool().query("SELECT COUNT(*)::int AS count FROM appointments WHERE patient_id IN (SELECT id FROM users WHERE email = $1)", [DEMO_ACCOUNTS[0].email])).rows[0].count,
-    messages: (await getTestPool().query("SELECT COUNT(*)::int AS count FROM messages WHERE appointment_id IN (SELECT id FROM appointments WHERE patient_id IN (SELECT id FROM users WHERE email = $1))", [DEMO_ACCOUNTS[0].email])).rows[0].count,
+  const demoEmails = DEMO_ACCOUNTS.map((account) => account.email);
+  const countDemoRecords = async () => {
+    const { rows } = await getTestPool().query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM users
+          WHERE email = ANY($1::text[])) AS users,
+         (SELECT COUNT(*)::int FROM doctors d
+          JOIN users u ON u.id = d.user_id
+          WHERE u.email = ANY($1::text[])) AS doctor_profiles,
+         (SELECT COUNT(*)::int FROM doctor_availability da
+          JOIN doctors d ON d.id = da.doctor_id
+          JOIN users u ON u.id = d.user_id
+          WHERE u.email = ANY($1::text[])) AS availability,
+         (SELECT COUNT(*)::int FROM appointments
+          WHERE patient_id IN (
+            SELECT id FROM users WHERE email = $2
+          )) AS appointments,
+         (SELECT COUNT(*)::int FROM documents
+          WHERE patient_id IN (
+            SELECT id FROM users WHERE email = $2
+          )) AS documents,
+         (SELECT COUNT(*)::int FROM reminders
+          WHERE user_id IN (
+            SELECT id FROM users WHERE email = $2
+          )) AS reminders,
+         (SELECT COUNT(*)::int FROM messages
+          WHERE appointment_id IN (
+            SELECT id FROM appointments
+            WHERE patient_id IN (
+              SELECT id FROM users WHERE email = $2
+            )
+          )) AS messages`,
+      [demoEmails, DEMO_ACCOUNTS[0].email],
+    );
+    return rows[0];
   };
+  const before = await countDemoRecords();
 
   await seedDemoAccounts();
 
-  const after = {
-    users: (await getTestPool().query("SELECT COUNT(*)::int AS count FROM users WHERE email IN ($1, $2)", [DEMO_ACCOUNTS[0].email, DEMO_ACCOUNTS[1].email])).rows[0].count,
-    appointments: (await getTestPool().query("SELECT COUNT(*)::int AS count FROM appointments WHERE patient_id IN (SELECT id FROM users WHERE email = $1)", [DEMO_ACCOUNTS[0].email])).rows[0].count,
-    messages: (await getTestPool().query("SELECT COUNT(*)::int AS count FROM messages WHERE appointment_id IN (SELECT id FROM appointments WHERE patient_id IN (SELECT id FROM users WHERE email = $1))", [DEMO_ACCOUNTS[0].email])).rows[0].count,
-  };
+  const after = await countDemoRecords();
 
   assert.deepEqual(after, before);
 });

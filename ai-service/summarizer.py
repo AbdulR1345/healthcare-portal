@@ -79,7 +79,7 @@ def extract_key_patterns(text: str) -> dict:
 
     follow_up = "Schedule a follow-up with your doctor to discuss these results."
     if not abnormal:
-        follow_up = "No immediate concerns detected. Confirm with your healthcare provider."
+        follow_up = "Discuss these results with your healthcare provider."
 
     return {
         "documentType": doc_type,

@@ -20,6 +20,54 @@ export const DEMO_ACCOUNTS = [
     fullName: "Demo Doctor",
     phone: "555-0102",
   },
+  {
+    email: "demo.cardiology@healthcare.local",
+    password: "DemoCardiology123!",
+    role: "doctor",
+    fullName: "Demo Cardiology Doctor",
+    phone: "555-0103",
+    doctorProfile: {
+      specialization: "Cardiology",
+      location: "New York, NY",
+      fee: 150,
+      experienceYears: 12,
+      languages: ["English", "Spanish"],
+      bio: "Synthetic demo profile for recruiter review.",
+      rating: 4.7,
+    },
+  },
+  {
+    email: "demo.dermatology@healthcare.local",
+    password: "DemoDermatology123!",
+    role: "doctor",
+    fullName: "Demo Dermatology Doctor",
+    phone: "555-0104",
+    doctorProfile: {
+      specialization: "Dermatology",
+      location: "Los Angeles, CA",
+      fee: 120,
+      experienceYears: 8,
+      languages: ["English", "Korean"],
+      bio: "Synthetic demo profile for recruiter review.",
+      rating: 4.6,
+    },
+  },
+  {
+    email: "demo.pediatrics@healthcare.local",
+    password: "DemoPediatrics123!",
+    role: "doctor",
+    fullName: "Demo Pediatrics Doctor",
+    phone: "555-0105",
+    doctorProfile: {
+      specialization: "Pediatrics",
+      location: "Chicago, IL",
+      fee: 100,
+      experienceYears: 10,
+      languages: ["English", "Mandarin"],
+      bio: "Synthetic demo profile for recruiter review.",
+      rating: 4.5,
+    },
+  },
 ];
 
 const CLINIC_TIME_ZONE = process.env.CLINIC_TIME_ZONE || "UTC";
@@ -181,6 +229,15 @@ async function ensureDemoUser(client, account) {
   }
 
   if (role === "doctor") {
+    const profile = account.doctorProfile || {
+      specialization: "General Practice",
+      location: "Remote Demo",
+      fee: 110,
+      experienceYears: 12,
+      languages: ["English", "Spanish"],
+      bio: "Synthetic demo doctor profile created for recruiter review and portfolio demos.",
+      rating: 4.8,
+    };
     const { rows: doctorRows } = await client.query(
       `SELECT id
        FROM doctors
@@ -197,16 +254,17 @@ async function ensureDemoUser(client, account) {
              experience_years = $5,
              languages = $6,
              bio = $7,
-             rating = 4.8
+             rating = $8
          WHERE user_id = $1`,
         [
           user.id,
-          "General Practice",
-          "Remote Demo",
-          110,
-          12,
-          ["English", "Spanish"],
-          "Demo doctor profile created for recruiter review and portfolio demos.",
+          profile.specialization,
+          profile.location,
+          profile.fee,
+          profile.experienceYears,
+          profile.languages,
+          profile.bio,
+          profile.rating,
         ],
       );
     } else {
@@ -221,8 +279,17 @@ async function ensureDemoUser(client, account) {
           bio,
           rating
         )
-        VALUES ($1, 'General Practice', 'Remote Demo', 110, 12, ARRAY['English', 'Spanish'], 'Demo doctor profile created for recruiter review and portfolio demos.', 4.8)`,
-        [user.id],
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          user.id,
+          profile.specialization,
+          profile.location,
+          profile.fee,
+          profile.experienceYears,
+          profile.languages,
+          profile.bio,
+          profile.rating,
+        ],
       );
     }
 

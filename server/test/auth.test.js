@@ -290,6 +290,7 @@ test("newly registered unverified users can immediately log in and refresh", asy
     {
       method: "POST",
       cookie: refreshCookie(login.response),
+      headers: { Origin: "http://localhost:5173" },
     },
   );
   assert.equal(refresh.response.status, 200);
@@ -758,6 +759,16 @@ test("production refresh and logout require a trusted frontend origin", async (t
   });
   assert.equal(login.response.status, 200);
   const cookie = refreshCookie(login.response);
+
+  const missingOriginRefresh = await request(
+    productionHarness.baseUrl,
+    "/api/auth/refresh",
+    {
+      method: "POST",
+      cookie,
+    },
+  );
+  assert.equal(missingOriginRefresh.response.status, 403);
 
   const rejectedRefresh = await request(
     productionHarness.baseUrl,
