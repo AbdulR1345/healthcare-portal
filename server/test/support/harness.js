@@ -115,6 +115,7 @@ async function startAiStub() {
 async function startObjectStore() {
   const objects = new Map();
   let getCount = 0;
+  let getStatus = 200;
   const server = http.createServer((request, response) => {
     const objectKey = new URL(request.url, "http://localhost").pathname;
     const chunks = [];
@@ -129,6 +130,12 @@ async function startObjectStore() {
 
       if (request.method === "GET") {
         getCount += 1;
+        if (getStatus !== 200) {
+          const code = getStatus === 404 ? "NoSuchKey" : "AccessDenied";
+          response.writeHead(getStatus, { "Content-Type": "application/xml" });
+          response.end(`<Error><Code>${code}</Code></Error>`);
+          return;
+        }
         const object = objects.get(objectKey);
         if (!object) {
           response.writeHead(404, { "Content-Type": "application/xml" });
@@ -156,6 +163,9 @@ async function startObjectStore() {
     endpoint: `http://127.0.0.1:${server.address().port}`,
     get getCount() {
       return getCount;
+    },
+    setGetStatus(status) {
+      getStatus = status;
     },
     close: () =>
       new Promise((resolve, reject) =>

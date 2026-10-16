@@ -182,7 +182,21 @@ export async function downloadDocument(req, res) {
     if (!storageKey)
       return res.status(404).json({ error: "Document file not found" });
 
-    const fileBuffer = await readDocument(storageKey);
+    let fileBuffer;
+    try {
+      fileBuffer = await readDocument(storageKey);
+    } catch (err) {
+      if (err.code === "DOCUMENT_TOO_LARGE") {
+        return res
+          .status(413)
+          .json({ error: "Document exceeds download limits" });
+      }
+      console.error(
+        "Document storage read failed:",
+        err.code || err.$metadata?.httpStatusCode || "unknown",
+      );
+      return res.status(503).json({ error: "Document storage unavailable" });
+    }
     if (!fileBuffer)
       return res.status(404).json({ error: "Document file not found" });
 
@@ -251,7 +265,11 @@ export async function summarizeDocument(req, res) {
           .status(413)
           .json({ error: "Document exceeds processing limits" });
       }
-      return res.status(404).json({ error: "Document file not found" });
+      console.error(
+        "Document storage read failed:",
+        error.code || error.$metadata?.httpStatusCode || "unknown",
+      );
+      return res.status(503).json({ error: "Document storage unavailable" });
     }
 
     if (!hasSupportedFileSignature(fileBuffer, extension)) {

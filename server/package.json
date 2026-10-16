@@ -17,7 +17,7 @@
     "test:local": "node test/local.js",
     "test:watch": "node test/run.js --watch",
     "test:coverage": "node test/run.js --experimental-test-coverage",
-    "test:ai": "python -m unittest discover -s ../ai-service -p 'test_*.py' -v"
+    "test:ai": "python -m unittest discover -s ../ai-service -p test_*.py -v"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1143.0",

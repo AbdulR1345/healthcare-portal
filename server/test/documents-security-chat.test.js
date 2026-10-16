@@ -161,6 +161,40 @@ test("production private object storage preserves authenticated document access"
   assert.equal(productionHarness.objectStore.getCount, 1);
 });
 
+test("S3 read failures are not misreported as missing documents", async (t) => {
+  const productionHarness = await startHarness({ nodeEnv: "production" });
+  t.after(() => productionHarness.close());
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const token = await signIn(patient, productionHarness.baseUrl);
+  const upload = await uploadFixture(
+    patient,
+    token,
+    "%PDF-1.4\nprivate object fixture",
+    productionHarness.baseUrl,
+  );
+  assert.equal(upload.response.status, 201);
+  productionHarness.objectStore.setGetStatus(403);
+
+  const download = await request(
+    productionHarness.baseUrl,
+    `/api/documents/${upload.data.id}/download`,
+    { token },
+  );
+  const aiCallsBefore = productionHarness.ai.requestCount;
+  const summary = await request(
+    productionHarness.baseUrl,
+    `/api/documents/${upload.data.id}/summarize`,
+    { method: "POST", token },
+  );
+
+  assert.equal(download.response.status, 503);
+  assert.equal(download.data.error, "Document storage unavailable");
+  assert.equal(summary.response.status, 503);
+  assert.equal(summary.data.error, "Document storage unavailable");
+  assert.equal(productionHarness.ai.requestCount, aiCallsBefore);
+});
+
 test("a doctor with an active care relationship can access the patient's document", async (t) => {
   const fixture = await createFixture(t);
   const patient = await fixture.createUser();
@@ -874,6 +908,30 @@ test("AI failure records a safe failed state without logging document contents",
   assert.equal(stored.rows[0].ai_processing_error, "AI_SERVICE_UNAVAILABLE");
   assert.equal(JSON.stringify(result.data).includes(harness.aiToken), false);
   assert.equal(harness.logs.includes(privateMarker), false);
+});
+
+test("an AI-service 404 is reported as an AI failure, not a missing document", async (t) => {
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const token = await signIn(patient);
+  const upload = await uploadFixture(patient, token, "%PDF-1.4\nfixture");
+  harness.ai.setBehavior({ status: 404 });
+  t.after(() => harness.ai.setBehavior());
+
+  const result = await request(
+    harness.baseUrl,
+    `/api/documents/${upload.data.id}/summarize`,
+    { method: "POST", token },
+  );
+  const stored = await getTestPool().query(
+    "SELECT ai_processing_status, ai_processing_error FROM documents WHERE id = $1",
+    [upload.data.id],
+  );
+
+  assert.equal(result.response.status, 503);
+  assert.equal(result.data.ai_processing_status, "failed");
+  assert.equal(stored.rows[0].ai_processing_status, "failed");
+  assert.equal(stored.rows[0].ai_processing_error, "AI_SERVICE_UNAVAILABLE");
 });
 
 test("AI timeout marks processing failed", async (t) => {
