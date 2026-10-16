@@ -500,3 +500,80 @@ test("appointment status access is scoped to assigned doctors while admins may a
   );
   assert.equal(completed.response.status, 200);
 });
+
+test("reminders require authentication and are scoped to the signed-in user", async (t) => {
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const otherPatient = await fixture.createUser();
+  const doctor = await fixture.createDoctor({ dayOfWeek: 1 });
+  const otherDoctor = await fixture.createDoctor({ dayOfWeek: 1 });
+  const date = futureDateForWeekday(1);
+  const appointment = await fixture.createAppointment({
+    patientId: patient.id,
+    doctorId: doctor.doctorId,
+    date,
+  });
+  const otherAppointment = await fixture.createAppointment({
+    patientId: otherPatient.id,
+    doctorId: otherDoctor.doctorId,
+    date,
+  });
+  const ownMessage = "Own reminder fixture";
+  const otherMessage = "Other user's reminder fixture";
+
+  await getTestPool().query(
+    `INSERT INTO reminders (appointment_id, user_id, message, scheduled_for)
+     VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())`,
+    [
+      appointment.id,
+      patient.id,
+      ownMessage,
+      otherAppointment.id,
+      otherPatient.id,
+      otherMessage,
+    ],
+  );
+
+  const anonymous = await request(harness.baseUrl, "/api/admin/reminders");
+  assert.equal(anonymous.response.status, 401);
+
+  const own = await request(harness.baseUrl, "/api/admin/reminders", {
+    token: await signIn(patient),
+  });
+  assert.equal(own.response.status, 200);
+  assert.deepEqual(
+    own.data.map((reminder) => reminder.message),
+    [ownMessage],
+  );
+});
+
+test("AI doctor assistance validates input and falls back after a service timeout", async (t) => {
+  const fixture = await createFixture(t);
+  const patient = await fixture.createUser();
+  const doctor = await fixture.createDoctor({ dayOfWeek: 1 });
+  const token = await signIn(patient);
+
+  const malformed = await request(harness.baseUrl, "/api/doctors/assist", {
+    method: "POST",
+    token,
+    body: { query: { unexpected: true } },
+  });
+  assert.equal(malformed.response.status, 400);
+
+  const oversized = await request(harness.baseUrl, "/api/doctors/assist", {
+    method: "POST",
+    token,
+    body: { query: "x".repeat(501) },
+  });
+  assert.equal(oversized.response.status, 400);
+
+  harness.ai.setBehavior({ delay: 1000 });
+  t.after(() => harness.ai.setBehavior());
+  const result = await request(harness.baseUrl, "/api/doctors/assist", {
+    method: "POST",
+    token,
+    body: { query: "Family Medicine" },
+  });
+  assert.equal(result.response.status, 200);
+  assert.ok(result.data.suggestions.some((item) => item.id === doctor.doctorId));
+});

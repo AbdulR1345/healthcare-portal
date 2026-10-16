@@ -649,6 +649,9 @@ test("authorized Socket.IO participants can exchange messages", async (t) => {
   const incomingMessage = new Promise((resolve) =>
     doctorSocket.once("new_message", resolve),
   );
+  const incomingNotification = new Promise((resolve) =>
+    doctorSocket.once("notification", resolve),
+  );
   const empty = await socketAck(patientSocket, "send_message", {
     receiverId: doctor.id,
     content: "  ",
@@ -665,10 +668,13 @@ test("authorized Socket.IO participants can exchange messages", async (t) => {
     content: "Socket follow-up",
   });
   const received = await incomingMessage;
+  const notification = await incomingNotification;
   assert.equal(sent.ok, true);
   assert.equal(sent.message.sender_id, patient.id);
   assert.equal(sent.message.appointment_id, appointment.id);
   assert.equal(received.content, "Socket follow-up");
+  assert.equal(notification.type, "message");
+  assert.equal(notification.fromId, patient.id);
 });
 
 test("authorized socket conversations expose typing and presence only in-room", async (t) => {

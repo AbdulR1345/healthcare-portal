@@ -1,12 +1,15 @@
-# AI-Powered Healthcare Appointment & Patient Portal
+# Carepath — Healthcare Appointment & Patient Portal
 
-An full-stack healthcare platform where patients discover doctors, book appointments, upload medical documents, get AI summaries, and chat with providers — with role-based dashboards for patients, doctors, and admins.
+A full-stack portfolio/demo application where patients discover clinicians,
+book appointments, upload medical documents, request summaries, and chat with
+providers. It is not a certified clinical system; summaries are informational
+only and do not provide medical advice, diagnosis, or treatment.
 
 ---
 
 ## Portfolio Value
 
-This project demonstrates production-grade skills across the entire stack:
+This project demonstrates full-stack engineering across the following areas:
 
 | Skill Area                  | Implementation                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------- |
@@ -14,11 +17,11 @@ This project demonstrates production-grade skills across the entire stack:
 | **Authentication & RBAC**   | JWT + bcrypt with Patient, Doctor, and Admin roles                              |
 | **Scheduling Logic**        | Slot generation, double-booking prevention (`UNIQUE` constraint + `FOR UPDATE`) |
 | **Real-Time Communication** | Socket.IO chat with read status and live notifications                          |
-| **Secure File Management**  | Multer uploads with type/size validation, role-based document access            |
-| **AI Integration**          | FastAPI service for document summarization and appointment assistant            |
+| **Private File Management** | Validated uploads, authorization checks, local development storage, private S3 in production |
+| **AI Integration**          | Optional FastAPI service; rule-based fallback when the LLM is unavailable       |
 | **Database Design**         | PostgreSQL with normalized schema, indexes, and relational integrity            |
 | **Dashboards**              | Patient, Doctor, and Admin views with analytics                                 |
-| **Deployment-Ready**        | Environment configs for Vercel, Render/Railway, and PostgreSQL                  |
+| **Deployment Configuration**| Vercel frontend, Render API/AI service, and PostgreSQL                           |
 
 ---
 
@@ -31,7 +34,7 @@ This project demonstrates production-grade skills across the entire stack:
 | Database     | PostgreSQL                           |
 | Auth         | JWT, bcrypt                          |
 | AI Layer     | Python, FastAPI, LLM API (optional)  |
-| File Storage | Local / Cloudinary-ready             |
+| File Storage | Local development / private S3 production |
 | Real-Time    | Socket.IO                            |
 | Deployment   | Vercel, Render/Railway               |
 
@@ -77,11 +80,12 @@ Today's appointments, patient info, consultation management.
 
 ### 5. Medical Document Upload
 
-PDF, JPG, PNG with role-based access controls.
+PDF, JPG, PNG with role-based access controls. Local filesystem storage is for
+development only; production requires configured private S3-compatible storage.
 
 ### 6. AI Document Summarization
 
-Document → extract text → AI processing → plain-language summary  
+Document → extract text → optional LLM processing or rule-based fallback → summary
 Output: document type, key info, abnormal values, follow-up  
 _Disclaimer: For informational purposes only._
 
@@ -91,7 +95,8 @@ Text messaging, read status, real-time notifications via Socket.IO.
 
 ### 8. Appointment Reminders
 
-Automated reminders: _"Your appointment with Dr. X is scheduled for tomorrow at 10:00 AM"_
+Hourly reminder processing; email delivery requires a configured, working
+Resend or SMTP provider. Undelivered reminders remain pending for retry.
 
 ### 9. Patient Dashboard
 
@@ -126,7 +131,7 @@ This will:
 1. Start PostgreSQL via Docker
 2. Install server + client dependencies
 3. Create `.env` files
-4. Initialize schema and seed 4 demo doctors
+4. Initialize the local schema, apply migrations, and create synthetic demo data
 
 ### Option B — Manual Setup
 
@@ -142,6 +147,8 @@ cd server
 cp .env.example .env          # DATABASE_URL already matches Docker defaults
 npm install
 npm run db:init
+npm run db:migrate
+npm run demo:seed             # optional synthetic fixtures; local/non-production only
 npm run dev                   # http://localhost:5000
 
 # 4. Client (new terminal)
@@ -164,19 +171,35 @@ After setup, the client and API can be started together with:
 npm run dev
 ```
 
-Run the complete local validation suite with:
+Run the repository's syntax/build/compile checks with:
 
 ```powershell
 npm test
 ```
 
-This checks all server JavaScript syntax, builds the production client, and compiles the AI service Python files. The API health check is available at `http://localhost:5000/api/health`.
+This checks server JavaScript syntax, builds the frontend, and compiles the AI
+service Python files. It does not run the PostgreSQL-backed integration tests or
+the Python unit tests.
 
 To build only the frontend:
 
 ```powershell
 npm run build
 ```
+
+The backend integration suite requires a local PostgreSQL service. From the
+project root, `npm run test:local` verifies that `DATABASE_URL` points to a
+loopback host and creates/uses a separate database ending in `_test`; an
+explicit `TEST_DATABASE_URL` is also required to be loopback and not
+production-named. It never falls back to a remote or production database. The
+test runner applies migrations to that isolated database and runs backend
+integration tests and AI Python unit tests. To run only the Python unit tests, use
+`npm --prefix server run test:ai`. There is no dedicated frontend unit-test
+suite; `npm run build` is its available production-build check.
+
+`npm run db:init` is local-development-only and refuses non-loopback or
+production-named database targets. Follow it with `npm run db:migrate` to apply
+the current schema. The development server itself does not run migrations.
 
 ### Transactional Email
 
@@ -202,14 +225,25 @@ EMAIL_FROM=Carepath <your-carepath-gmail@gmail.com>
 
 The portfolio deployment can enable approved demo sessions without weakening production authentication. Demo access is intentionally limited to the `patient` and `doctor` roles and is unavailable unless `DEMO_MODE_ENABLED=true`. Seeded demo accounts are also blocked from normal email/password login unless demo mode is enabled; non-demo accounts continue to use normal login.
 
-- Use `npm run demo:seed` to create or refresh the synthetic demo patient and
+- Use `npm run demo:seed` only against a dedicated local loopback database
+  to create or refresh the synthetic demo patient and
   four synthetic clinician profiles (General Practice, Cardiology,
   Dermatology, and Pediatrics). The seed is repeatable and refuses to modify a
-  reserved demo email that belongs to a non-demo or admin account.
-- To seed a deployed Render database from your machine, provide the database's External Database URL as the process-level `DATABASE_URL` and run `npm run demo:seed` from `server`. A process-level value takes precedence over `.env` files; if both root and server `.env` files define the variable, the root `.env` value is loaded first. The script uses verified TLS for Render database hosts; keep the URL private and never commit it. It only ensures the reserved synthetic demo accounts and associated synthetic records; it does not reset the database.
-- The frontend never receives demo passwords or login credentials.
+  reserved demo email that belongs to a non-demo or admin account. It does not
+  reset the database. If a reserved demo appointment slot has non-seed data, the
+  transaction fails rather than overwriting that appointment.
+- Never run demo seeding against a live patient/production database. The seed
+  creates synthetic demo users, appointments, a document, reminders, and chat
+  messages. The frontend does not receive demo passwords or login credentials.
+- `npm run setup`, `scripts/setup.ps1`, and `scripts/setup.sh` initialize the
+  local schema, apply migrations, and seed only after `db:init` has verified a
+  loopback database target. Root `.env` values are loaded before `server/.env`;
+  unset any process-level `DATABASE_URL` override and verify the target is local
+  before running seed commands.
 - Demo users are clearly marked as demo accounts internally and are not admins.
-- Registration remains available even when transactional email delivery is unavailable; email verification is optional and does not block login.
+- Demo access is disabled unless `DEMO_MODE_ENABLED=true`. Registration and
+  login do not depend on email delivery; verification, password reset, and
+  email reminders do.
 
 ---
 
@@ -244,7 +278,7 @@ The portfolio deployment can enable approved demo sessions without weakening pro
 5. **Secure file uploads** — Type whitelist, size limits
 6. **Real-time messaging** — Socket.IO with auth and read receipts
 7. **Patient data access controls** — Query-level filtering by role
-8. **Responsible AI summaries** — Disclaimers + fallback when LLM unavailable
+8. **Responsible summaries** — Informational disclaimer; rule-based fallback when LLM unavailable
 9. **DB query optimization** — Indexes on specialization, location, appointments
 10. **Deployment-ready config** — `.env.example` files for all services
 
@@ -254,8 +288,8 @@ The portfolio deployment can enable approved demo sessions without weakening pro
 
 | Feature                                 | Status                   |
 | --------------------------------------- | ------------------------ |
-| AI appointment assistant                | ✅ Live in doctor search |
-| Email/SMS reminders                     | ✅ Email via Resend      |
+| AI appointment assistant                | Directory matching; optional AI service with fallback |
+| Appointment reminders                   | Email only when Resend or SMTP is configured |
 | Calendar sync · Payments · Video        | 🔜 Roadmap               |
 | PWA · Analytics · Digital prescriptions | 🔜 Roadmap               |
 
@@ -266,18 +300,23 @@ The portfolio deployment can enable approved demo sessions without weakening pro
 ### Architecture
 
 ```
-Vercel (React)  →  Render (Node API + AI)  →  Render PostgreSQL
+Vercel (React)  →  Render Node API  →  Render PostgreSQL
+                         ├──────────→  Render FastAPI AI service
+                         └──────────→  Private S3-compatible document storage
 ```
+
+The browser calls only the Node API; AI credentials remain server-side.
+Production uploads require a private S3-compatible bucket. Render's local
+filesystem is not durable document storage, and pre-existing local upload
+files are not automatically copied into S3 when changing storage providers.
 
 ### Step 1 — Deploy Database + Backend + AI (Render)
 
-1. Push this repo to GitHub
+1. Push the reviewed source to GitHub
 2. Go to [render.com](https://render.com) → **New Blueprint**
 3. Connect repo — Render reads `render.yaml` automatically
-4. After deploy, open **healthcare-api** → **Shell** and run:
-   ```bash
-   npm run db:init
-   ```
+4. The API start command runs `npm start`, which applies pending migrations
+   before starting the service; do not run `db:init` against the hosted database.
 5. Set `CLIENT_URL` on the API service to your Vercel URL (after Step 2)
 
 ### Create the First Production Administrator
@@ -320,6 +359,7 @@ Use a unique password that meets the registration password rules. The command cr
 | `CLINIC_TIME_ZONE` | IANA timezone for clinic scheduling, for example `America/New_York` |
 | `AI_SERVICE_URL` | Auto from healthcare-ai service |
 | `AI_SERVICE_TOKEN` | Shared secret generated by the Render AI service |
+| `AI_ASSIST_TIMEOUT_MS` | Optional doctor-assist request timeout in milliseconds; defaults to `15000` and is capped at `60000` |
 | `MEDICAL_STORAGE_PROVIDER` | `s3` in production; use the configured private object-storage bucket |
 | `S3_BUCKET` | Private production S3 bucket name |
 | `S3_REGION` | AWS region for the bucket |
@@ -345,7 +385,7 @@ The API defaults `CLINIC_TIME_ZONE` to UTC if unset. Rate-limit counters are sto
 | --- | --- |
 | `PORT` | Render assigns this automatically; the app listens on `$PORT` |
 | `AI_SERVICE_TOKEN` | Shared secret matching the backend service token |
-| `OPENAI_API_KEY` | Required when the AI service calls the LLM |
+| `OPENAI_API_KEY` | Optional; without it the service uses a rule-based fallback |
 | `LLM_MODEL` | Example: `gpt-4o-mini` |
 
 **Vercel — client**
@@ -355,6 +395,46 @@ The API defaults `CLINIC_TIME_ZONE` to UTC if unset. Rate-limit counters are sto
 | `VITE_API_URL` | `https://your-api.onrender.com` |
 
 Keep the app and AI service on Render subdomains unless you purchase a custom domain later. The repository includes a root `.env.example` file with local-development and deployment placeholders for all required configuration.
+
+### Hosting limitations and database backups
+
+The configured Render PostgreSQL free instance is scheduled to expire on
+November 8, 2026. Confirm the date and current retention/export options in the
+Render dashboard before that deadline. A backup file existing locally does not
+prove that it is complete or restorable. Keep database exports outside GitHub,
+restrict access to them, and never paste their contents into an issue or chat.
+
+The schema uses PostgreSQL and the migrations use `uuid-ossp`. Alternatives to
+evaluate include paid Render PostgreSQL, [Neon](https://neon.tech/),
+[Supabase](https://supabase.com/), and [Railway](https://railway.com/). Verify
+each provider's current plan limits, connection pooling, backup retention,
+region, SSL settings, and extension support before choosing; free-tier policies
+can change.
+
+For a safe backup check, first identify whether the export is a plain SQL script
+or a `pg_dump` archive without printing its contents. For a custom archive,
+`pg_restore --list` checks whether its archive catalog can be read. For either
+format, test a restore into a separate, empty, disposable local PostgreSQL
+database, never the source database. Use `psql` with `ON_ERROR_STOP` for plain
+SQL, or `pg_restore --exit-on-error --no-owner` for a custom archive. Then
+verify schema objects, row counts, constraints, and representative application
+reads without exposing patient values. Do not consider the backup validated
+until the isolated restore and application checks complete successfully.
+
+Suggested migration sequence:
+
+1. Create a new PostgreSQL database and verify SSL, `uuid-ossp`, connection
+   limits, and network access.
+2. Restore the export into a disposable database there and run the test suite
+   against that database before scheduling a cutover.
+3. Take a fresh source backup, pause writes for the final export/import, and
+   compare schema and table counts without printing patient data.
+4. Update only the Render API's `DATABASE_URL` dashboard setting, deploy the
+   reviewed API commit, and smoke-test health/readiness, sign-in, booking,
+   document authorization, and chat. Keep the old database intact until the
+   new instance is verified and rollback is no longer needed.
+5. Migrate document objects separately to durable private storage; a PostgreSQL
+   restore does not include files stored on a Render filesystem or S3 bucket.
 
 ### Docker (Alternative)
 

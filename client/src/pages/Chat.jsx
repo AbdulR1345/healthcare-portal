@@ -5,6 +5,14 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
 import { socketUrl } from "../config";
 
+function sortConversations(conversations) {
+  return [...conversations].sort((left, right) => {
+    const leftTime = left.last_at ? Date.parse(left.last_at) : 0;
+    const rightTime = right.last_at ? Date.parse(right.last_at) : 0;
+    return rightTime - leftTime;
+  });
+}
+
 export default function Chat() {
   const { user } = useAuth();
   const [conversations, setConversations] = useState([]);
@@ -47,23 +55,26 @@ export default function Chat() {
             currentPartner?.partner_id === partnerId;
 
           if (existing) {
-            return current.map((conversation) =>
-              conversation.partner_id === partnerId
-                ? {
-                    ...conversation,
-                    last_message: msg.content,
-                    last_at: msg.created_at,
-                    unread_count: unreadCount
-                      ? 0
-                      : Number(conversation.unread_count || 0) + 1,
-                  }
-                : conversation,
+            return sortConversations(
+              current.map((conversation) =>
+                conversation.partner_id === partnerId
+                  ? {
+                      ...conversation,
+                      last_message: msg.content,
+                      last_at: msg.created_at,
+                      unread_count: unreadCount
+                        ? 0
+                        : Number(conversation.unread_count || 0) + 1,
+                    }
+                  : conversation,
+              ),
             );
           }
 
           if (msg.receiver_id !== user.id) return current;
 
-          return [
+          return sortConversations([
+            ...current,
             {
               partner_id: partnerId,
               partner_name: msg.sender_name || "Care team",
@@ -72,14 +83,23 @@ export default function Chat() {
               last_at: msg.created_at,
               unread_count: unreadCount ? 0 : 1,
             },
-            ...current,
-          ];
+          ]);
         });
         if (
           currentPartner?.partner_id === msg.sender_id &&
           msg.receiver_id === user.id
         ) {
-          socketRef.current?.emit("mark_read", { senderId: msg.sender_id });
+          socketRef.current?.emit(
+            "mark_read",
+            { senderId: msg.sender_id },
+            (result) => {
+              if (!result?.ok) return;
+              api.chat
+                .conversations()
+                .then((updated) => setConversations(updated))
+                .catch((error) => setChatError(error.message));
+            },
+          );
         }
         if (
           currentPartner &&
@@ -111,8 +131,21 @@ export default function Chat() {
           setPartnerTyping(false);
       });
       socketRef.current.on("notification", (notif) => {
-        setLiveNotice(`New message from ${notif.from || "your care team"}`);
+        setLiveNotice(
+          notif.type === "reminder"
+            ? "Appointment reminder received."
+            : `New message from ${notif.from || "your care team"}`,
+        );
         window.setTimeout(() => setLiveNotice(""), 5000);
+        if (
+          notif.type === "message" &&
+          notif.fromId !== activePartnerRef.current?.partner_id
+        ) {
+          api.chat
+            .conversations()
+            .then((updated) => setConversations(updated))
+            .catch((error) => setChatError(error.message));
+        }
       });
     };
 
@@ -243,14 +276,16 @@ export default function Chat() {
           { ...msg, sender_name: user.full_name },
         ]);
         setConversations((current) =>
-          current.map((conversation) =>
-            conversation.partner_id === activePartner.partner_id
-              ? {
-                  ...conversation,
-                  last_message: content,
-                  last_at: msg.created_at,
-                }
-              : conversation,
+          sortConversations(
+            current.map((conversation) =>
+              conversation.partner_id === activePartner.partner_id
+                ? {
+                    ...conversation,
+                    last_message: content,
+                    last_at: msg.created_at,
+                  }
+                : conversation,
+            ),
           ),
         );
       }

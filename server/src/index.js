@@ -276,6 +276,7 @@ io.on("connection", (socket) => {
       io.to(userRoom(receiverId)).emit("notification", {
         type: "message",
         from: socket.user.fullName,
+        fromId: socket.user.id,
       });
       acknowledge(callback, { ok: true, message });
     } catch (err) {
@@ -366,11 +367,13 @@ const reminderTask = cron.schedule("0 * * * *", async () => {
     );
 
     for (const reminder of rows) {
-      await sendReminderEmail(
+      const delivery = await sendReminderEmail(
         reminder.email,
         "Appointment Reminder — Healthcare Portal",
         reminder.message,
       );
+
+      if (!delivery.sent) continue;
 
       await pool.query("UPDATE reminders SET sent = true WHERE id = $1", [
         reminder.id,

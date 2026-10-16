@@ -75,6 +75,44 @@ const DEMO_PATIENT_EMAIL = DEMO_ACCOUNTS[0].email;
 const DEMO_DOCTOR_EMAIL = DEMO_ACCOUNTS[1].email;
 
 class ReservedDemoEmailConflictError extends Error {}
+class UnsafeDemoSeedTargetError extends Error {}
+
+function assertLocalDemoSeedTarget() {
+  if (process.env.NODE_ENV === "production") {
+    throw new UnsafeDemoSeedTargetError(
+      "Demo seeding is disabled in production.",
+    );
+  }
+
+  let databaseUrl;
+  try {
+    databaseUrl = new URL(process.env.DATABASE_URL || "");
+  } catch {
+    throw new UnsafeDemoSeedTargetError(
+      "Demo seeding requires a valid local PostgreSQL URL.",
+    );
+  }
+
+  if (!/^postgres(?:ql)?:$/.test(databaseUrl.protocol)) {
+    throw new UnsafeDemoSeedTargetError(
+      "Demo seeding requires a PostgreSQL URL.",
+    );
+  }
+
+  const hostname = databaseUrl.hostname.toLowerCase();
+  if (!["localhost", "127.0.0.1", "::1"].includes(hostname)) {
+    throw new UnsafeDemoSeedTargetError(
+      "Demo seeding refuses non-local database hosts.",
+    );
+  }
+
+  const databaseName = decodeURIComponent(databaseUrl.pathname.slice(1));
+  if (!databaseName || /prod/i.test(databaseName)) {
+    throw new UnsafeDemoSeedTargetError(
+      "Demo seeding refuses production-named databases.",
+    );
+  }
+}
 
 function getClinicDateString(date = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -363,26 +401,24 @@ async function ensureDemoAppointments(client, patientUserId, doctorUserId) {
 
   for (const item of config) {
     const { rows } = await client.query(
-      `SELECT id
+      `SELECT id, status
        FROM appointments
        WHERE patient_id = $1
          AND doctor_id = $2
-         AND appointment_date = $3::date
-         AND start_time = $4::time`,
-      [patientUserId, doctorId, item.date, item.startTime],
+         AND notes = $3
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [patientUserId, doctorId, item.notes],
     );
 
     if (rows.length) {
       const appointmentId = rows[0].id;
-      await client.query(
-        `UPDATE appointments
-         SET end_time = $1::time,
-             status = $2,
-             notes = $3,
-             appointment_date = $4::date
-         WHERE id = $5`,
-        [item.endTime, item.status, item.notes, item.date, appointmentId],
-      );
+      if (rows[0].status === "cancelled") {
+        throw new Error(
+          "A seeded demo appointment was cancelled; refusing to recreate it.",
+        );
+      }
       appointmentIds.push(appointmentId);
       continue;
     }
@@ -468,8 +504,15 @@ async function ensureDemoNotifications(client, patientUserId, doctorUserId, appo
   const reminderMessage = `Your upcoming appointment with Dr. Demo Doctor is scheduled for ${appointment.appointment_date}.`;
 
   const { rows: reminderRows } = await client.query(
-    `SELECT id FROM reminders WHERE appointment_id = $1 AND user_id = $2 AND message = $3`,
-    [appointmentId, patientUserId, reminderMessage],
+    `SELECT id
+     FROM reminders
+     WHERE appointment_id = $1
+       AND user_id = $2
+       AND message LIKE 'Your upcoming appointment with Dr. Demo Doctor is scheduled for %.'
+     ORDER BY created_at ASC
+     LIMIT 1
+     FOR UPDATE`,
+    [appointmentId, patientUserId],
   );
 
   if (!reminderRows.length) {
@@ -492,7 +535,8 @@ async function ensureDemoNotifications(client, patientUserId, doctorUserId, appo
     );
   }
 
-  const doctorMessage = `Hello Demo Patient, your appointment is confirmed for ${appointment.appointment_date} at ${appointment.start_time.slice(0, 5)}. Please arrive 10 minutes early.`;
+  const doctorMessage =
+    "Hello Demo Patient, your demo appointment is confirmed. Please arrive 10 minutes early.";
   const patientMessage = "Hello Doctor, I wanted to confirm my upcoming appointment.";
 
   const messagePairs = [
@@ -561,6 +605,7 @@ export async function seedDemoAccounts() {
   let stage = "database connection";
 
   try {
+    assertLocalDemoSeedTarget();
     client = await pool.connect();
 
     stage = "transaction start";
@@ -639,6 +684,9 @@ if (isDirectExecution) {
       );
     }
     if (error instanceof ReservedDemoEmailConflictError) {
+      console.error(error.message);
+    }
+    if (error instanceof UnsafeDemoSeedTargetError) {
       console.error(error.message);
     }
     process.exitCode = 1;

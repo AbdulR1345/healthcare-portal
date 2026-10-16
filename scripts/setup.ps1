@@ -33,8 +33,12 @@ npm install
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # 4. Initialize database
-Write-Host "`n[4/5] Initializing database schema & seed data..." -ForegroundColor Yellow
+Write-Host "`n[4/5] Initializing the local database..." -ForegroundColor Yellow
 npm run db:init
+if ($LASTEXITCODE -ne 0) { exit 1 }
+npm run db:migrate
+if ($LASTEXITCODE -ne 0) { exit 1 }
+npm run demo:seed
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # 5. Client setup
@@ -62,4 +66,4 @@ Write-Host "App:     http://localhost:5173"
 Write-Host "API:     http://localhost:5000"
 Write-Host "AI:      http://localhost:8000"
 Write-Host ""
-Write-Host "Demo login: patient@demo.com / password123" -ForegroundColor Cyan
+Write-Host "Synthetic demo accounts were created; demo login is disabled by default." -ForegroundColor Cyan

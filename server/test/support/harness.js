@@ -225,6 +225,7 @@ export async function startHarness({
           : "integration-test-only-jwt-secret-with-enough-entropy-7821",
       AI_SERVICE_TOKEN: testToken,
       AI_SERVICE_URL: ai.url,
+      AI_ASSIST_TIMEOUT_MS: "250",
       AI_PROCESSING_TIMEOUT_MS: "250",
       OPENAI_API_KEY: "",
       MEDICAL_UPLOADS_DIR: uploadDir,

@@ -44,6 +44,14 @@ function getTestDatabaseUrl() {
     );
   }
 
+  if (testTarget.host !== "loopback") {
+    throw new Error("TEST_DATABASE_URL must point to loopback PostgreSQL.");
+  }
+
+  if (/prod/i.test(testTarget.database)) {
+    throw new Error("TEST_DATABASE_URL must not target a production-named database.");
+  }
+
   if (process.env.DATABASE_URL) {
     const normalTarget = databaseTarget(process.env.DATABASE_URL);
     if (

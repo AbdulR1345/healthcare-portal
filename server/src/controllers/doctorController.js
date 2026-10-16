@@ -1,5 +1,11 @@
 import pool from "../db/pool.js";
 
+const configuredAiAssistTimeout = Number(process.env.AI_ASSIST_TIMEOUT_MS) || 15000;
+const AI_ASSIST_TIMEOUT_MS = Math.max(
+  100,
+  Math.min(configuredAiAssistTimeout, 60000),
+);
+
 export async function searchDoctors(req, res) {
   const {
     specialization,
@@ -397,11 +403,16 @@ function formatTime(minutes) {
 }
 
 export async function aiAssistSearch(req, res) {
-  const { query } = req.body;
+  const query = req.body?.query;
 
-  if (!query?.trim()) {
+  if (typeof query !== "string" || !query.trim()) {
     return res.status(400).json({
       error: "Query is required",
+    });
+  }
+  if (query.trim().length > 500) {
+    return res.status(400).json({
+      error: "Query must be 500 characters or fewer",
     });
   }
 
@@ -430,6 +441,7 @@ export async function aiAssistSearch(req, res) {
           query: query.trim(),
           doctors,
         }),
+        signal: AbortSignal.timeout(AI_ASSIST_TIMEOUT_MS),
       });
 
       if (!response.ok) throw new Error("AI service request failed");

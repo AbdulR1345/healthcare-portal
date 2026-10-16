@@ -223,3 +223,74 @@ test("running demo seed twice does not duplicate records", async () => {
 
   assert.deepEqual(after, before);
 });
+
+test("demo seed does not overwrite an appointment without its synthetic marker", async () => {
+  const { rows } = await getTestPool().query(
+    `SELECT a.id, a.notes
+     FROM appointments a
+     JOIN users patient ON patient.id = a.patient_id
+     JOIN doctors d ON d.id = a.doctor_id
+     JOIN users doctor ON doctor.id = d.user_id
+     WHERE patient.email = $1
+       AND doctor.email = $2
+       AND a.notes = $3
+     LIMIT 1`,
+    [
+      DEMO_ACCOUNTS[0].email,
+      DEMO_ACCOUNTS[1].email,
+      "Demo follow-up visit to review preventive care and next steps.",
+    ],
+  );
+  assert.ok(rows.length);
+
+  const appointment = rows[0];
+  const userNotes = "User-entered appointment notes";
+  await getTestPool().query("UPDATE appointments SET notes = $1 WHERE id = $2", [
+    userNotes,
+    appointment.id,
+  ]);
+
+  try {
+    try {
+      await seedDemoAccounts();
+    } catch (error) {
+      if (error.code !== "23505") throw error;
+    }
+    const { rows: unchanged } = await getTestPool().query(
+      "SELECT notes FROM appointments WHERE id = $1",
+      [appointment.id],
+    );
+    assert.equal(unchanged[0].notes, userNotes);
+  } finally {
+    await getTestPool().query("UPDATE appointments SET notes = $1 WHERE id = $2", [
+      appointment.notes,
+      appointment.id,
+    ]);
+  }
+
+  await seedDemoAccounts();
+});
+
+test("demo seed refuses production and non-local database targets", async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+
+  try {
+    process.env.NODE_ENV = "production";
+    await assert.rejects(
+      () => seedDemoAccounts(),
+      /disabled in production/,
+    );
+
+    process.env.NODE_ENV = "test";
+    process.env.DATABASE_URL =
+      "postgresql://db.example.invalid/healthcare_test";
+    await assert.rejects(
+      () => seedDemoAccounts(),
+      /refuses non-local database hosts/,
+    );
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+    process.env.DATABASE_URL = originalDatabaseUrl;
+  }
+});

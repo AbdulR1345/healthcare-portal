@@ -19,6 +19,8 @@ npm install
 
 echo -e "\n[4/5] Initializing database..."
 npm run db:init
+npm run db:migrate
+npm run demo:seed
 
 echo -e "\n[5/5] Setting up client..."
 cd ../client
